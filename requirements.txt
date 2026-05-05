@@ -1,0 +1,6 @@
+streamlit
+Pillow
+svgelements
+streamlit-drawable-canvas
+numpy
+requests
