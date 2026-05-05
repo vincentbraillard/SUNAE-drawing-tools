@@ -7,20 +7,21 @@ st.set_page_config(page_title="Sunae Studio", layout="wide", initial_sidebar_sta
 
 # --- 2. CONFIGURATIONS DES TABLES ---
 TABLE_CONFIGS = {
-    "Origin S": {"is_round": True, "canvas_w": 600, "canvas_h": 600},
-    "Dimension S": {"is_round": False, "canvas_w": 700, "canvas_h": 350},
-    "Dimension L": {"is_round": False, "canvas_w": 800, "canvas_h": 400}
+    "Origin S": {"is_round": True, "canvas_w": 600, "canvas_h": 600, "css_class": "frame-round"},
+    "Dimension S": {"is_round": False, "canvas_w": 700, "canvas_h": 350, "css_class": "frame-rect-s"},
+    "Dimension L": {"is_round": False, "canvas_w": 800, "canvas_h": 400, "css_class": "frame-rect-l"}
 }
 
 # --- 3. INJECTION DU CSS GLOBAL ---
 def inject_global_css():
     st.markdown("""
     <style>
+    /* Masquer les éléments par défaut de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* LA BILLE CHROMÉE DU SLIDER */
+    /* === LE SLIDER EN BILLE CHROMÉE === */
     .stSlider [role="slider"] {
         background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%) !important;
         border: none !important;
@@ -36,18 +37,67 @@ def inject_global_css():
         box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
     }
     
-    /* Centrage strict du canevas pour éviter la déformation */
-    div[data-testid="stVerticalBlock"] > div:has(iframe) {
+    /* === LE CADRE NOIR (TABLE) === */
+    div[data-testid="stVerticalBlock"] > div:has(iframe), div[data-testid="stVerticalBlock"] > div:has(svg.sunae-canvas-frame) {
         display: flex;
         justify-content: center;
+    }
+    
+    iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {
+        border: 45px solid #121212 !important;
+        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.4) !important;
+        background-color: #f4ebd8 !important; /* Couleur du sable */
+        margin: 0 auto !important;
+        display: block !important;
+    }
+    .frame-round { border-radius: 50% !important; width: 600px !important; height: 600px !important; max-width: 600px !important;}
+    .frame-rect-l { border-radius: 20px !important; width: 800px !important; height: 400px !important; max-width: 800px !important;}
+    .frame-rect-s { border-radius: 20px !important; width: 700px !important; height: 350px !important; max-width: 700px !important;}
+
+    /* === MAGIE CSS : CARTES BLEUES POUR ÉTAPE 1 ET 2 === */
+    /* Cible uniquement les blocs qui ont nos marqueurs invisibles */
+    div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] {
+        background-color: #171d2b !important;
+        border-radius: 12px !important;
+        border: 1px solid #2a3441 !important;
+        padding: 15px !important;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important;
+        text-align: center;
+    }
+    div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] * {
+        color: #ffffff !important;
+    }
+    div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] img {
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    /* Boutons dans les cartes */
+    div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="stButton"] button {
+        background-color: transparent !important;
+        border: 1px solid #dfc391 !important;
+        border-radius: 6px !important;
+        transition: 0.3s;
+    }
+    div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="stButton"] button:hover {
+        background-color: #dfc391 !important;
+        color: #171d2b !important;
+    }
+    
+    /* Réduction de la taille des images pour l'Étape 2 uniquement */
+    div[data-testid="stVerticalBlock"]:has(.step2-marker) [data-testid="column"] img {
+        width: 60% !important;
+        margin: 0 auto 15px auto !important;
+        display: block;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. GESTION DE LA NAVIGATION ---
+# --- 4. GESTION DE LA NAVIGATION ET MÉMOIRE ---
 if 'step' not in st.session_state: st.session_state.step = 1
 if 'module' not in st.session_state: st.session_state.module = None
 if 'table' not in st.session_state: st.session_state.table = None
+if 'my_drawing' not in st.session_state: st.session_state.my_drawing = None
+if 'canvas_key' not in st.session_state: st.session_state.canvas_key = 0
 
 def set_module(mod_name):
     st.session_state.module = mod_name
@@ -56,16 +106,25 @@ def set_module(mod_name):
 def set_table(table_name):
     st.session_state.table = table_name
     st.session_state.step = 3
+    st.session_state.my_drawing = None # Reset dessin
+    st.session_state.canvas_key += 1
 
 def reset_app():
     st.session_state.step = 1
     st.session_state.module = None
     st.session_state.table = None
 
+def undo_last_stroke():
+    """Fonction pour le bouton Étape Précédente"""
+    if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
+        if len(st.session_state.my_drawing["objects"]) > 0:
+            st.session_state.my_drawing["objects"].pop()
+            st.session_state.canvas_key += 1 # Force le canvas à se mettre à jour
+
 # --- 5. EXÉCUTION DE L'INTERFACE ---
 inject_global_css()
 
-# En-tête : Logo
+# En-tête : Logo Sunae
 col_sp1, col_logo, col_sp2 = st.columns([1, 1, 1])
 with col_logo:
     try: 
@@ -75,55 +134,10 @@ with col_logo:
 st.write("---")
 
 # ==========================================
-# ÉTAPE 1 : CHOIX DU MODULE (CARTES BLEU NUIT)
+# ÉTAPE 1 : CHOIX DU MODULE
 # ==========================================
 if st.session_state.step == 1:
-    # CSS Spécifique pour les cartes de l'étape 1
-    st.markdown("""
-    <style>
-    div[data-testid="column"] {
-        background-color: #171d2b; /* Bleu nuit élégant */
-        border-radius: 12px;
-        overflow: hidden;
-        border: 1px solid #2a3441;
-        padding-bottom: 20px;
-    }
-    div[data-testid="column"] img {
-        width: 100%;
-        border-radius: 12px 12px 0 0;
-        margin-bottom: 5px;
-    }
-    div[data-testid="column"] h3 {
-        color: #ffffff !important;
-        padding: 0 15px;
-        margin-top: 10px;
-        margin-bottom: 5px;
-        font-size: 1.4rem;
-    }
-    div[data-testid="column"] p {
-        color: #e2e8f0 !important;
-        padding: 0 15px;
-        font-size: 1rem;
-        margin-bottom: 20px;
-    }
-    /* Style du bouton "Choisir" */
-    div[data-testid="column"] button {
-        margin-left: 15px;
-        background-color: transparent !important;
-        border: 1px solid #dfc391 !important;
-        color: #ffffff !important;
-        border-radius: 8px !important;
-        font-weight: 500;
-        padding: 5px 20px;
-        transition: all 0.3s ease;
-    }
-    div[data-testid="column"] button:hover {
-        background-color: #dfc391 !important;
-        color: #171d2b !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
+    st.markdown("<span class='step-marker'></span>", unsafe_allow_html=True) # Marqueur CSS pour le fond bleu
     st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>1. Sélectionnez votre Expérience</h2>", unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
@@ -132,63 +146,47 @@ if st.session_state.step == 1:
         except: pass
         st.markdown("### Écrire un Texte")
         st.write("Incrustez vos mots préférés dans le sable.")
-        st.button("Choisir", key="btn_mod_text", on_click=set_module, args=("Texte Automatique",), use_container_width=False)
+        st.button("Choisir", key="btn_mod_text", on_click=set_module, args=("Texte Automatique",), use_container_width=True)
     with c2:
         try: st.image("img_dessin.png", use_container_width=True)
         except: pass
         st.markdown("### Dessin Libre")
         st.write("Laissez parler votre créativité.")
-        st.button("Choisir", key="btn_mod_draw", on_click=set_module, args=("Dessin Libre",), use_container_width=False)
+        st.button("Choisir", key="btn_mod_draw", on_click=set_module, args=("Dessin Libre",), use_container_width=True)
     with c3:
         try: st.image("img_svg.png", use_container_width=True)
         except: pass
         st.markdown("### Convertir Fichier SVG")
         st.write("Transformez vos logos et motifs existants.")
-        st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=False)
+        st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=True)
 
 # ==========================================
 # ÉTAPE 2 : CHOIX DE LA TABLE
 # ==========================================
 elif st.session_state.step == 2:
+    st.markdown("<span class='step-marker step2-marker'></span>", unsafe_allow_html=True) # Marqueurs CSS (Fond bleu + Images réduites)
     st.button("⬅ Retour aux expériences", on_click=reset_app)
     st.markdown(f"<h2 style='text-align: center; margin-bottom: 30px;'>2. Votre Table Sunae</h2>", unsafe_allow_html=True)
     
-    # CSS pour le style sombre des cartes des tables
-    st.markdown("""
-    <style>
-    div[data-testid="column"] {
-        background-color: #1a1a1a;
-        border-radius: 12px;
-        padding-bottom: 20px;
-        border: 1px solid #333;
-    }
-    div[data-testid="column"] h3, div[data-testid="column"] p {
-        color: #ffffff;
-        padding: 0 15px;
-    }
-    div[data-testid="column"] button { margin-left: 15px; }
-    </style>
-    """, unsafe_allow_html=True)
-
     c1, c2, c3 = st.columns(3)
     with c1:
         try: st.image("carre_dimension L.png", use_container_width=True)
         except: st.warning("Image introuvable")
         st.markdown("### Dimension L")
         st.write("Rectangulaire - 2000x1000mm")
-        st.button("Choisir", key="btn_tab_dl", on_click=set_table, args=("Dimension L",))
+        st.button("Choisir", key="btn_tab_dl", on_click=set_table, args=("Dimension L",), use_container_width=True)
     with c2:
         try: st.image("carre_Origin S.png", use_container_width=True)
         except: st.warning("Image introuvable")
         st.markdown("### Origin S")
         st.write("Ronde - Ø850mm")
-        st.button("Choisir", key="btn_tab_os", on_click=set_table, args=("Origin S",))
+        st.button("Choisir", key="btn_tab_os", on_click=set_table, args=("Origin S",), use_container_width=True)
     with c3:
         try: st.image("carre_dimension S.png", use_container_width=True)
         except: st.warning("Image introuvable")
         st.markdown("### Dimension S")
         st.write("Rectangulaire - 1400x700mm")
-        st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",))
+        st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",), use_container_width=True)
 
 # ==========================================
 # ÉTAPE 3 : ESPACE DE TRAVAIL (WORKSPACE)
@@ -197,135 +195,126 @@ elif st.session_state.step == 3:
     cfg = TABLE_CONFIGS[st.session_state.table]
     w = cfg["canvas_w"]
     h = cfg["canvas_h"]
+    frame_class = cfg["css_class"]
     
     c_btn, c_title = st.columns([1, 4])
     c_btn.button("⬅ Changer de table", on_click=lambda: setattr(st.session_state, 'step', 2))
     c_title.markdown(f"<h3 style='text-align: center;'>Studio : {st.session_state.module} | Table : {st.session_state.table}</h3>", unsafe_allow_html=True)
     st.write("---")
 
-    # Cadre Noir Externe
-    if cfg["is_round"]:
-        cadre_css = f"""
-        <style>
-        iframe[title="streamlit_drawable_canvas.st_canvas"] {{
-            border: 45px solid #121212 !important;
-            border-radius: 50% !important;
-            box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.5) !important;
-            margin: 0 auto !important;
-            display: block !important;
-            width: {w}px !important; height: {h}px !important;
-            max-width: {w}px !important; max-height: {h}px !important;
-        }}
-        </style>
-        """
-    else:
-        cadre_css = f"""
-        <style>
-        iframe[title="streamlit_drawable_canvas.st_canvas"] {{
-            border: 40px solid #121212 !important;
-            border-radius: 20px !important;
-            box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.5) !important;
-            margin: 0 auto !important;
-            display: block !important;
-            width: {w}px !important; height: {h}px !important;
-            max-width: {w}px !important; max-height: {h}px !important;
-        }}
-        </style>
-        """
-    st.markdown(cadre_css, unsafe_allow_html=True)
-
     if st.session_state.module == "Dessin Libre":
-        col_tools, col_canvas = st.columns([1, 3])
+        
+        # Le Slider décide de ce qu'on affiche !
+        st.markdown("#### Simulation du parcours de la bille")
+        slider_val = st.slider(" ", 0, 100, 100, label_visibility="collapsed")
+        st.write("---")
+
+        col_tools, col_canvas = st.columns([1, 4])
         
         with col_tools:
             st.markdown("### Outils de Dessin")
             drawing_mode = st.radio("Mode :", ("✏️ Dessiner", "📏 Ligne Droite", "🧹 Effacer"))
             stroke_width = st.slider("Épaisseur du trait", 1, 15, 3)
             
-            # GESTION CORRECTE DE LA GOMME : Mode freedraw avec couleur sable
-            if drawing_mode == "✏️ Dessiner":
-                d_mode = "freedraw"
-                s_color = "#2980b9"
-            elif drawing_mode == "📏 Ligne Droite":
-                d_mode = "line"
-                s_color = "#2980b9"
-            else:
-                d_mode = "freedraw"
-                s_color = "#f4ebd8" # Efface en peignant avec la couleur du sable
+            st.button("↩ Étape précédente", on_click=undo_last_stroke, use_container_width=True)
             
-            st.markdown("<br><br>", unsafe_allow_html=True)
+            # Gestion de la gomme
+            if drawing_mode == "✏️ Dessiner": d_mode, s_color = "freedraw", "#2980b9"
+            elif drawing_mode == "📏 Ligne Droite": d_mode, s_color = "line", "#2980b9"
+            else: d_mode, s_color = "freedraw", "#f4ebd8" # L'effaceur peint avec la couleur sable
+            
+            st.markdown("<br>", unsafe_allow_html=True)
             st.button("💾 EXPORTER (.THR)", type="primary", use_container_width=True)
 
         with col_canvas:
-            # Création du canevas interactif. Le fond est injecté nativement !
-            canvas_result = st_canvas(
-                fill_color="rgba(255, 165, 0, 0)",
-                stroke_width=stroke_width,
-                stroke_color=s_color,
-                background_color="#f4ebd8", # Fond sable solide natif
-                height=h,
-                width=w,
-                drawing_mode=d_mode,
-                key="canvas_sunae",
-            )
             
-        # ==========================================
-        # LE SIMULATEUR SVG EN DIRECT (Points + Trajet)
-        # ==========================================
-        st.write("---")
-        st.markdown("#### Simulation du parcours de la bille")
-        slider_val = st.slider(" ", 0, 100, 100, label_visibility="collapsed")
-        
-        # Parse le dessin pour générer la preview
-        if canvas_result.json_data is not None and "objects" in canvas_result.json_data:
-            paths = []
-            for obj in canvas_result.json_data["objects"]:
-                if obj["type"] == "path":
-                    # Extraction des coordonnées du pinceau
-                    pts = [(cmd[-2], cmd[-1]) for cmd in obj["path"] if cmd[0] in ["M", "L", "Q"]]
-                    if pts: paths.append(pts)
-                elif obj["type"] == "line":
-                    paths.append([(obj["left"]+obj["x1"], obj["top"]+obj["y1"]), (obj["left"]+obj["x2"], obj["top"]+obj["y2"])])
+            # MODE DESSIN (Slider à 100%)
+            if slider_val == 100:
+                canvas_result = st_canvas(
+                    fill_color="rgba(255, 165, 0, 0)",
+                    stroke_width=stroke_width,
+                    stroke_color=s_color,
+                    background_color="#f4ebd8", # Fond sable natif
+                    height=h, width=w,
+                    drawing_mode=d_mode,
+                    initial_drawing=st.session_state.my_drawing, # Restaure la mémoire
+                    key=f"canvas_sunae_{st.session_state.canvas_key}",
+                )
+                
+                # Mise à jour de la mémoire en temps réel
+                if canvas_result.json_data is not None:
+                    st.session_state.my_drawing = canvas_result.json_data
             
-            if paths:
-                # Calcul de la portion à afficher selon le slider
-                total_pts = sum(len(p) for p in paths)
-                pts_to_draw = int((slider_val / 100.0) * total_pts)
+            # MODE SIMULATION (Slider < 100%)
+            else:
+                # On génère un SVG "miroir" qui remplace exactement le canevas
+                svg_content = f'<svg class="sunae-canvas-frame {frame_class}" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
                 
-                drawn_paths = []
-                current_count = 0
-                start_pt = paths[0][0]
-                end_pt = None
-                
-                for path in paths:
-                    if current_count + len(path) <= pts_to_draw:
-                        drawn_paths.append(path)
-                        current_count += len(path)
-                        if len(path) > 0: end_pt = path[-1]
-                    else:
-                        remaining = pts_to_draw - current_count
-                        if remaining > 0:
-                            drawn_paths.append(path[:remaining])
-                            end_pt = path[remaining - 1]
-                        break
-
-                # Génération du rendu SVG miniature
-                sim_w, sim_h = w // 2, h // 2
-                br = "50%" if cfg["is_round"] else "15px"
-                svg = f'<div style="display:flex; justify-content:center;"><svg width="{sim_w}" height="{sim_h}" viewBox="0 0 {w} {h}" style="background-color:#f4ebd8; border-radius:{br}; border: 8px solid #121212; box-shadow: 0px 5px 15px rgba(0,0,0,0.5);">'
-                
-                for p in drawn_paths:
-                    if len(p) > 1:
-                        path_d = "M " + " L ".join([f"{x},{y}" for x, y in p])
-                        svg += f'<path d="{path_d}" fill="none" stroke="#2980b9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>'
-                
-                if start_pt and pts_to_draw > 0:
-                    svg += f'<circle cx="{start_pt[0]}" cy="{start_pt[1]}" r="8" fill="#2ecc71"/>' # Point Vert
-                if end_pt and pts_to_draw > 0:
-                    svg += f'<circle cx="{end_pt[0]}" cy="{end_pt[1]}" r="8" fill="#c0392b"/>' # Point Rouge
+                if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
+                    paths = []
+                    # 1. Analyse du dessin
+                    for obj in st.session_state.my_drawing["objects"]:
+                        if obj["type"] == "path":
+                            # Extraction des commandes pour le chemin SVG
+                            d_str = " ".join([ " ".join(map(str, cmd)) for cmd in obj["path"] ])
+                            start_pt = (obj["path"][0][1], obj["path"][0][2])
+                            end_pt = (obj["path"][-1][-2], obj["path"][-1][-1])
+                            paths.append({"d": d_str, "start": start_pt, "end": end_pt, "cmd_len": len(obj["path"]), "obj": obj})
+                        elif obj["type"] == "line":
+                            d_str = f"M {obj['left']+obj['x1']} {obj['top']+obj['y1']} L {obj['left']+obj['x2']} {obj['top']+obj['y2']}"
+                            start_pt = (obj['left']+obj['x1'], obj['top']+obj['y1'])
+                            end_pt = (obj['left']+obj['x2'], obj['top']+obj['y2'])
+                            paths.append({"d": d_str, "start": start_pt, "end": end_pt, "cmd_len": 2, "obj": obj})
                     
-                svg += '</svg></div>'
+                    # 2. Rendu de l'animation
+                    if paths:
+                        total_cmds = sum(p["cmd_len"] for p in paths)
+                        cmds_to_draw = int((slider_val / 100.0) * total_cmds)
+                        
+                        current_cmds = 0
+                        current_end = None
+                        start_dot = paths[0]["start"]
+                        
+                        for p in paths:
+                            if current_cmds >= cmds_to_draw: break
+                            
+                            # Lignes rouges de voyage (entre le trait précédent et le nouveau)
+                            if current_end is not None:
+                                svg_content += f'<line x1="{current_end[0]}" y1="{current_end[1]}" x2="{p["start"][0]}" y2="{p["start"][1]}" stroke="red" stroke-width="2" />'
+                            
+                            cmds_in_path = p["cmd_len"]
+                            color = p["obj"].get("stroke", "#2980b9")
+                            stroke_w = p["obj"].get("strokeWidth", 3)
+                            
+                            if current_cmds + cmds_in_path <= cmds_to_draw:
+                                # Dessine le trait complet
+                                svg_content += f'<path d="{p["d"]}" fill="none" stroke="{color}" stroke-width="{stroke_w}" stroke-linecap="round" stroke-linejoin="round"/>'
+                                current_end = p["end"]
+                                current_cmds += cmds_in_path
+                            else:
+                                # Dessin partiel (pour simuler la bille en plein milieu d'un trait)
+                                rem = cmds_to_draw - current_cmds
+                                if p["obj"]["type"] == "path":
+                                    partial = p["obj"]["path"][:rem]
+                                    d_str = " ".join([ " ".join(map(str, cmd)) for cmd in partial ])
+                                    svg_content += f'<path d="{d_str}" fill="none" stroke="{color}" stroke-width="{stroke_w}" stroke-linecap="round" stroke-linejoin="round"/>'
+                                    current_end = (partial[-1][-2], partial[-1][-1])
+                                else:
+                                    # Ligne droite partielle
+                                    px = p["start"][0] + (p["end"][0] - p["start"][0]) * (rem / 2)
+                                    py = p["start"][1] + (p["end"][1] - p["start"][1]) * (rem / 2)
+                                    svg_content += f'<line x1="{p["start"][0]}" y1="{p["start"][1]}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="{stroke_w}" stroke-linecap="round"/>'
+                                    current_end = (px, py)
+                                break
+                        
+                        # Ajout des Points Vert et Rouge
+                        if cmds_to_draw > 0:
+                            svg_content += f'<circle cx="{start_dot[0]}" cy="{start_dot[1]}" r="6" fill="#2ecc71"/>' # Départ
+                            if current_end:
+                                svg_content += f'<circle cx="{current_end[0]}" cy="{current_end[1]}" r="6" fill="#c0392b"/>' # Fin
                 
-                st.markdown(svg, unsafe_allow_html=True)
+                svg_content += '</svg>'
+                st.markdown(svg_content, unsafe_allow_html=True)
+                
     else:
-        st.warning(f"Le module '{st.session_state.module}' est en cours de portage vers la version web.")
+        st.warning(f"Le module '{st.session_state.module}' est en cours de portage.")
