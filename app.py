@@ -6,10 +6,11 @@ import json
 st.set_page_config(page_title="Sunae Studio", layout="wide", initial_sidebar_state="collapsed")
 
 # --- 2. CONFIGURATIONS DES TABLES ---
+# Utilisation de dimensions strictes "scaled" (zone sable interne)
 TABLE_CONFIGS = {
-    "Origin S": {"is_round": True, "canvas_w": 600, "canvas_h": 600, "css_class": "frame-round"},
-    "Dimension S": {"is_round": False, "canvas_w": 700, "canvas_h": 350, "css_class": "frame-rect-s"},
-    "Dimension L": {"is_round": False, "canvas_w": 800, "canvas_h": 400, "css_class": "frame-rect-l"}
+    "Origin S": {"is_round": True, "canvas_w": 345, "canvas_h": 345}, # Ø690 scaled
+    "Dimension S": {"is_round": False, "canvas_w": 590, "canvas_h": 242}, # 1179x485 scaled
+    "Dimension L": {"is_round": False, "canvas_w": 898, "canvas_h": 398} # 1796x796 scaled
 }
 
 # --- 3. INJECTION DU CSS GLOBAL ---
@@ -37,56 +38,45 @@ def inject_global_css():
         box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
     }
     
-    /* === LE CADRE NOIR (TABLE) === */
+    /* === LE CADRE DE LA TABLE (Centrage) === */
     div[data-testid="stVerticalBlock"] > div:has(iframe), div[data-testid="stVerticalBlock"] > div:has(svg.sunae-canvas-frame) {
         display: flex;
         justify-content: center;
     }
     
-    iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {
-        border: 45px solid #121212 !important;
-        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.4) !important;
-        background-color: #f4ebd8 !important; /* Couleur du sable */
-        margin: 0 auto !important;
-        display: block !important;
-    }
-    .frame-round { border-radius: 50% !important; width: 600px !important; height: 600px !important; max-width: 600px !important;}
-    .frame-rect-l { border-radius: 20px !important; width: 800px !important; height: 400px !important; max-width: 800px !important;}
-    .frame-rect-s { border-radius: 20px !important; width: 700px !important; height: 350px !important; max-width: 700px !important;}
-
-    /* === MAGIE CSS : CARTES BLEUES POUR ÉTAPE 1 ET 2 === */
+    /* === MAGIE CSS : CARTES BLEU NUIT (ÉTAPE 1 ET 2) === */
     /* Cible uniquement les blocs qui ont nos marqueurs invisibles */
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] {
-        background-color: #171d2b !important;
+        background-color: #171d2b !important; /* Bleu nuit élégant */
         border-radius: 12px !important;
-        border: 1px solid #2a3441 !important;
+        border: 1px solid #2a3441 !important; /* Léger contour arrondi */
         padding: 15px !important;
         box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important;
-        text-align: center;
     }
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] * {
-        color: #ffffff !important;
+        color: #ffffff !important; /* Texte blanc */
     }
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] img {
+        width: 100%;
         border-radius: 8px;
         margin-bottom: 15px;
     }
     /* Boutons dans les cartes */
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="stButton"] button {
         background-color: transparent !important;
-        border: 1px solid #dfc391 !important;
+        border: 1px solid #dfc391 !important; /* Border doré (#dfc391) */
         border-radius: 6px !important;
         transition: 0.3s;
     }
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="stButton"] button:hover {
-        background-color: #dfc391 !important;
-        color: #171d2b !important;
+        background-color: #dfc391 !important; /* Background doré (#dfc391) sur hover */
+        color: #171d2b !important; /* Texte bleu nuit sur hover */
     }
     
-    /* Réduction de la taille des images pour l'Étape 2 uniquement */
+    /* === RÉDUCTION TAILLE IMAGES TABLES (ÉTAPE 2) === */
     div[data-testid="stVerticalBlock"]:has(.step2-marker) [data-testid="column"] img {
-        width: 60% !important;
-        margin: 0 auto 15px auto !important;
+        width: 60% !important; /* Réduction à 60% */
+        margin: 0 auto 15px auto !important; /* Centrage horizontal */
         display: block;
     }
     </style>
@@ -146,19 +136,19 @@ if st.session_state.step == 1:
         except: pass
         st.markdown("### Écrire un Texte")
         st.write("Incrustez vos mots préférés dans le sable.")
-        st.button("Choisir", key="btn_mod_text", on_click=set_module, args=("Texte Automatique",), use_container_width=True)
+        st.button("Choisir", key="btn_mod_text", on_click=set_module, args=("Texte Automatique",), use_container_width=False)
     with c2:
         try: st.image("img_dessin.png", use_container_width=True)
         except: pass
         st.markdown("### Dessin Libre")
         st.write("Laissez parler votre créativité.")
-        st.button("Choisir", key="btn_mod_draw", on_click=set_module, args=("Dessin Libre",), use_container_width=True)
+        st.button("Choisir", key="btn_mod_draw", on_click=set_module, args=("Dessin Libre",), use_container_width=False)
     with c3:
         try: st.image("img_svg.png", use_container_width=True)
         except: pass
         st.markdown("### Convertir Fichier SVG")
         st.write("Transformez vos logos et motifs existants.")
-        st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=True)
+        st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=False)
 
 # ==========================================
 # ÉTAPE 2 : CHOIX DE LA TABLE
@@ -174,19 +164,19 @@ elif st.session_state.step == 2:
         except: st.warning("Image introuvable")
         st.markdown("### Dimension L")
         st.write("Rectangulaire - 2000x1000mm")
-        st.button("Choisir", key="btn_tab_dl", on_click=set_table, args=("Dimension L",), use_container_width=True)
+        st.button("Choisir", key="btn_tab_dl", on_click=set_table, args=("Dimension L",), use_container_width=False)
     with c2:
         try: st.image("carre_Origin S.png", use_container_width=True)
         except: st.warning("Image introuvable")
         st.markdown("### Origin S")
         st.write("Ronde - Ø850mm")
-        st.button("Choisir", key="btn_tab_os", on_click=set_table, args=("Origin S",), use_container_width=True)
+        st.button("Choisir", key="btn_tab_os", on_click=set_table, args=("Origin S",), use_container_width=False)
     with c3:
         try: st.image("carre_dimension S.png", use_container_width=True)
         except: st.warning("Image introuvable")
         st.markdown("### Dimension S")
         st.write("Rectangulaire - 1400x700mm")
-        st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",), use_container_width=True)
+        st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",), use_container_width=False)
 
 # ==========================================
 # ÉTAPE 3 : ESPACE DE TRAVAIL (WORKSPACE)
@@ -195,7 +185,6 @@ elif st.session_state.step == 3:
     cfg = TABLE_CONFIGS[st.session_state.table]
     w = cfg["canvas_w"]
     h = cfg["canvas_h"]
-    frame_class = cfg["css_class"]
     
     c_btn, c_title = st.columns([1, 4])
     c_btn.button("⬅ Changer de table", on_click=lambda: setattr(st.session_state, 'step', 2))
@@ -204,7 +193,6 @@ elif st.session_state.step == 3:
 
     if st.session_state.module == "Dessin Libre":
         
-        # Le Slider décide de ce qu'on affiche !
         st.markdown("#### Simulation du parcours de la bille")
         slider_val = st.slider(" ", 0, 100, 100, label_visibility="collapsed")
         st.write("---")
@@ -218,10 +206,10 @@ elif st.session_state.step == 3:
             
             st.button("↩ Étape précédente", on_click=undo_last_stroke, use_container_width=True)
             
-            # Gestion de la gomme
+            # Gestion correcte de la gomme : freedraw avec couleur sable
             if drawing_mode == "✏️ Dessiner": d_mode, s_color = "freedraw", "#2980b9"
             elif drawing_mode == "📏 Ligne Droite": d_mode, s_color = "line", "#2980b9"
-            else: d_mode, s_color = "freedraw", "#f4ebd8" # L'effaceur peint avec la couleur sable
+            else: d_mode, s_color = "freedraw", "#f4ebd8" # L'effaceur peindra avec la couleur sable
             
             st.markdown("<br>", unsafe_allow_html=True)
             st.button("💾 EXPORTER (.THR)", type="primary", use_container_width=True)
@@ -230,14 +218,46 @@ elif st.session_state.step == 3:
             
             # MODE DESSIN (Slider à 100%)
             if slider_val == 100:
+                # Injection CSS du cadre de la table pour le canevas (Transparent)
+                if cfg["is_round"]:
+                    cadre_css = f"""
+                    <style>
+                    iframe[title="streamlit_drawable_canvas.st_canvas"] {{
+                        border: 45px solid #121212 !important; /* Bord noir */
+                        border-radius: 50% !important; /* Rond */
+                        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.5) !important;
+                        margin: 0 auto !important;
+                        display: block !important;
+                        width: {w}px !important; height: {h}px !important;
+                        max-width: {w}px !important; max-height: {h}px !important;
+                    }}
+                    </style>
+                    """
+                else:
+                    cadre_css = f"""
+                    <style>
+                    iframe[title="streamlit_drawable_canvas.st_canvas"] {{
+                        border: 40px solid #121212 !important;
+                        border-radius: 20px !important;
+                        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.5) !important;
+                        margin: 0 auto !important;
+                        display: block !important;
+                        width: {w}px !important; height: {h}px !important;
+                        max-width: {w}px !important; max-height: {h}px !important;
+                    }}
+                    </style>
+                    """
+                st.markdown(cadre_css, unsafe_allow_html=True)
+
                 canvas_result = st_canvas(
                     fill_color="rgba(255, 165, 0, 0)",
                     stroke_width=stroke_width,
                     stroke_color=s_color,
-                    background_color="#f4ebd8", # Fond sable natif
+                    background_color="#f4ebd8", # Fond sable natif pour garantir la zone beige
                     height=h, width=w,
                     drawing_mode=d_mode,
                     initial_drawing=st.session_state.my_drawing, # Restaure la mémoire
+                    display_toolbar=False, # Masquer la barre d'outils
                     key=f"canvas_sunae_{st.session_state.canvas_key}",
                 )
                 
@@ -247,8 +267,31 @@ elif st.session_state.step == 3:
             
             # MODE SIMULATION (Slider < 100%)
             else:
-                # On génère un SVG "miroir" qui remplace exactement le canevas
-                svg_content = f'<svg class="sunae-canvas-frame {frame_class}" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
+                # Injection CSS du cadre de la table pour le SVG miniature (Transparent)
+                if cfg["is_round"]:
+                    cadre_css = """
+                    <style>
+                    svg.sunae-canvas-frame {
+                        border: 45px solid #121212 !important;
+                        border-radius: 50% !important;
+                        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.4) !important;
+                    }
+                    </style>
+                    """
+                else:
+                    cadre_css = """
+                    <style>
+                    svg.sunae-canvas-frame {
+                        border: 40px solid #121212 !important;
+                        border-radius: 20px !important;
+                        box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.4) !important;
+                    }
+                    </style>
+                    """
+                st.markdown(cadre_css, unsafe_allow_html=True)
+
+                # Génération du rendu SVG "miroir" qui remplace exactement le canevas
+                svg_content = f'<svg class="sunae-canvas-frame" width="{w}" height="{h}" viewBox="0 0 {w} {h}" style="margin: 0 auto; display: block;">'
                 
                 if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
                     paths = []
