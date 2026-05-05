@@ -15,12 +15,11 @@ TABLE_CONFIGS = {
 def inject_global_css():
     st.markdown("""
     <style>
-    /* Masquer le menu Streamlit par défaut */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* LA BILLE CHROMÉE (Transformation du slider) */
+    /* LA BILLE CHROMÉE */
     .stSlider [role="slider"] {
         background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%) !important;
         border: none !important;
@@ -29,7 +28,6 @@ def inject_global_css():
         height: 28px !important; 
         border-radius: 50% !important;
     }
-    /* Le sillon de la bille (Sable) */
     .stSlider > div > div > div {
         background: #d4c5b0 !important; 
         height: 8px !important;
@@ -37,11 +35,16 @@ def inject_global_css():
         box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
     }
     
-    /* Design des cartes cliquables */
     div[data-testid="column"] img {
         border-radius: 10px;
         box-shadow: 0px 4px 10px rgba(0,0,0,0.1);
         margin-bottom: 15px;
+    }
+    
+    /* Forcer le centrage de la zone de dessin */
+    div[data-testid="stVerticalBlock"] > div:has(iframe) {
+        display: flex;
+        justify-content: center;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -67,7 +70,7 @@ def reset_app():
 # --- 5. EXÉCUTION DE L'INTERFACE ---
 inject_global_css()
 
-# En-tête : Logo Sunae
+# En-tête : Logo
 col_sp1, col_logo, col_sp2 = st.columns([1, 1, 1])
 with col_logo:
     try: 
@@ -81,25 +84,23 @@ st.write("---")
 # ==========================================
 if st.session_state.step == 1:
     st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>1. Sélectionnez votre Expérience</h2>", unsafe_allow_html=True)
-    
-    # Images d'illustration temporaires (haute qualité)
-    img_texte = "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=600&h=300"
-    img_dessin = "https://images.unsplash.com/photo-1513364776144-60967b0f800f?auto=format&fit=crop&q=80&w=600&h=300"
-    img_svg = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600&h=300"
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.image(img_texte, use_container_width=True)
+        try: st.image("img_texte.png", use_container_width=True)
+        except: pass
         st.markdown("### Écrire un Texte")
         st.write("Incrustez vos mots préférés dans le sable.")
         st.button("Choisir", key="btn_mod_text", on_click=set_module, args=("Texte Automatique",), use_container_width=True)
     with c2:
-        st.image(img_dessin, use_container_width=True)
+        try: st.image("img_dessin.png", use_container_width=True)
+        except: pass
         st.markdown("### Dessin Libre")
         st.write("Laissez parler votre créativité.")
         st.button("Choisir", key="btn_mod_draw", on_click=set_module, args=("Dessin Libre",), use_container_width=True)
     with c3:
-        st.image(img_svg, use_container_width=True)
+        try: st.image("img_svg.png", use_container_width=True)
+        except: pass
         st.markdown("### Convertir Fichier SVG")
         st.write("Transformez vos logos et motifs existants.")
         st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=True)
@@ -137,45 +138,53 @@ elif st.session_state.step == 2:
 elif st.session_state.step == 3:
     cfg = TABLE_CONFIGS[st.session_state.table]
     
-    # 1. Barre supérieure
     c_btn, c_title = st.columns([1, 4])
     c_btn.button("⬅ Changer de table", on_click=lambda: setattr(st.session_state, 'step', 2))
     c_title.markdown(f"<h3 style='text-align: center;'>Studio : {st.session_state.module} | Table : {st.session_state.table}</h3>", unsafe_allow_html=True)
     st.write("---")
 
-    # 2. INJECTION DU CSS DU CADRE DE LA TABLE
-    # C'est ici qu'on transforme le canevas vierge en véritable table !
+    # CORRECTION : On verrouille les dimensions strictes pour éviter la déformation (ovale)
+    w = cfg["canvas_w"]
+    h = cfg["canvas_h"]
+    
     if cfg["is_round"]:
-        cadre_css = """
+        cadre_css = f"""
         <style>
-        iframe[title="streamlit_drawable_canvas.st_canvas"] {
-            border: 45px solid #121212 !important; /* Le bord de la table noir */
-            border-radius: 50% !important; /* Rend le tout rond */
-            box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.3) !important;
-            background-color: #f4ebd8 !important; /* Couleur du sable */
-            margin: 0 auto !important;
-            display: block !important;
-        }
-        </style>
-        """
-    else:
-        cadre_css = """
-        <style>
-        iframe[title="streamlit_drawable_canvas.st_canvas"] {
-            border: 40px solid #121212 !important;
-            border-radius: 20px !important; /* Coins de la table */
+        iframe[title="streamlit_drawable_canvas.st_canvas"] {{
+            border: 45px solid #121212 !important;
+            border-radius: 50% !important;
             box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.3) !important;
             background-color: #f4ebd8 !important;
             margin: 0 auto !important;
             display: block !important;
-        }
+            width: {w}px !important;
+            height: {h}px !important;
+            max-width: {w}px !important;
+            max-height: {h}px !important;
+        }}
+        </style>
+        """
+    else:
+        cadre_css = f"""
+        <style>
+        iframe[title="streamlit_drawable_canvas.st_canvas"] {{
+            border: 40px solid #121212 !important;
+            border-radius: 20px !important;
+            box-shadow: 0px 25px 50px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.3) !important;
+            background-color: #f4ebd8 !important;
+            margin: 0 auto !important;
+            display: block !important;
+            width: {w}px !important;
+            height: {h}px !important;
+            max-width: {w}px !important;
+            max-height: {h}px !important;
+        }}
         </style>
         """
     st.markdown(cadre_css, unsafe_allow_html=True)
 
-    # 3. CONTENU DES MODULES
     if st.session_state.module == "Dessin Libre":
-        col_tools, col_canvas = st.columns([1, 3])
+        col_tools, col_canvas = st.columns([1, 4])
         
         with col_tools:
             st.markdown("### Outils de Dessin")
@@ -188,14 +197,14 @@ elif st.session_state.step == 3:
             st.button("💾 EXPORTER (.THR)", type="primary", use_container_width=True)
 
         with col_canvas:
-            # Le canevas Streamlit (Il sera automatiquement habillé par le CSS au-dessus)
+            # Création du canevas interactif
             canvas_result = st_canvas(
-                fill_color="rgba(255, 165, 0, 0)",  # Pas de remplissage
+                fill_color="rgba(255, 165, 0, 0)",
                 stroke_width=stroke_width,
-                stroke_color="#2980b9" if mode_map[drawing_mode] != "eraser" else "#f4ebd8", # Bleu (ou couleur sable pour effacer)
-                background_color="rgba(0,0,0,0)", # Transparent pour laisser voir le fond CSS
-                height=cfg["canvas_h"],
-                width=cfg["canvas_w"],
+                stroke_color="#2980b9" if mode_map[drawing_mode] != "eraser" else "#f4ebd8", 
+                background_color="rgba(0,0,0,0)",
+                height=h,
+                width=w,
                 drawing_mode=mode_map[drawing_mode],
                 key="canvas_sunae",
             )
@@ -203,7 +212,6 @@ elif st.session_state.step == 3:
     else:
         st.warning(f"Le module '{st.session_state.module}' est en cours de portage vers la version web.")
 
-    # 4. SLIDER (La Bille)
     st.write("---")
     st.markdown("#### Simulation du parcours de la bille")
     st.slider(" ", 0, 100, 50, label_visibility="collapsed")
