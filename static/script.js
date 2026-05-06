@@ -15,6 +15,31 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
+// --- HELPERS : DATE ET TEXTE DE LA GRILLE ---
+function getYYMMDD() {
+    const d = new Date();
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return yy + mm + dd;
+}
+
+function getGridText() {
+    if (!currentTable || !TABLE_CFG[currentTable]) return "";
+    const cfg = TABLE_CFG[currentTable];
+    let text = "";
+    for (let r = 0; r < cfg.rows.length; r++) {
+        for (let c = 0; c < cfg.rows[r]; c++) {
+            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
+            if (input && input.value && input.value.trim() !== "") {
+                text += input.value.trim();
+            }
+        }
+    }
+    return text;
+}
+
+// --- FONCTION DE SÉCURITÉ DES BORDURES ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -27,6 +52,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
+// --- 1. NAVIGATION DES ÉTAPES ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -42,6 +68,7 @@ function goToStep(step, moduleName = null) {
         const toolsDessin = document.getElementById('tools-dessin');
         const toolsTexte = document.getElementById('tools-texte');
         const gridContainer = document.getElementById('text-grid-container');
+        const nameInput = document.getElementById('export-filename');
 
         if (currentModule === 'Texte Automatique') {
             simSection.style.display = 'none';
@@ -50,6 +77,8 @@ function goToStep(step, moduleName = null) {
             toolsDessin.style.display = 'none';
             
             toolsTexte.style.display = 'block';
+            nameInput.value = "";
+            nameInput.placeholder = "Texte_Sunae";
             if (canvas) {
                 canvas.isDrawingMode = false;
                 canvas.clear(); 
@@ -64,6 +93,8 @@ function goToStep(step, moduleName = null) {
             
             toolsTexte.style.display = 'none';
             gridContainer.innerHTML = ''; 
+            nameInput.value = "";
+            nameInput.placeholder = getYYMMDD() + "Freedrawing";
             if (canvas) {
                 canvas.isDrawingMode = (drawMode === 'freedraw');
                 updateTravelLines();
@@ -117,6 +148,10 @@ function buildTextGrid() {
             input.style.top = (py - entry_h / 2) + 'px';
 
             input.addEventListener('keyup', function(e) {
+                // MISE A JOUR DYNAMIQUE DU NOM DU FICHIER EN FONCTION DE LA FRAPPE
+                let currentText = getGridText();
+                document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
+
                 if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
                 this.value = this.value.toUpperCase();
                 
@@ -134,6 +169,7 @@ function buildTextGrid() {
 
 window.resetTextGrid = function() {
     document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
+    document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
 function setupWorkspace(tableName, round, w, h) {
@@ -161,7 +197,6 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
@@ -171,8 +206,6 @@ function setupWorkspace(tableName, round, w, h) {
 
         let absPoints = []; 
         
-        // CORRECTION MAJEURE: Le trait d'origine n'est PLUS modifié visuellement. 
-        // On calcule juste les points exacts en arrière-plan.
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
@@ -234,7 +267,6 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
         return { x: stroke.sunaeAbsPoints[0].x, y: stroke.sunaeAbsPoints[0].y };
@@ -249,7 +281,6 @@ function getStrokeEnd(stroke) {
     return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -330,7 +361,6 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (CORRECTION DU POINT ROUGE) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -429,7 +459,6 @@ function setupSimulator() {
                     
                     seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
 
-                    // CORRECTION DU SUIVI DU POINT ROUGE
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
                         const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
                         currentDotPos = { x: seg.sunaeAbsPoints[targetIdx].x, y: seg.sunaeAbsPoints[targetIdx].y };
@@ -471,6 +500,22 @@ window.exportTHR = function() {
         module: currentModule
     };
 
+    // --- LOGIQUE POUR LE NOM DU FICHIER ---
+    let customName = document.getElementById('export-filename').value.trim();
+    let finalFileName = "";
+
+    if (customName !== "") {
+        finalFileName = customName;
+    } else {
+        if (currentModule === 'Texte Automatique') {
+            let gridTxt = getGridText();
+            finalFileName = gridTxt ? gridTxt : "Texte_Sunae";
+        } else {
+            finalFileName = getYYMMDD() + "Freedrawing";
+        }
+    }
+    finalFileName = finalFileName.replace(/\s+/g, '_'); 
+
     if (currentModule === 'Texte Automatique') {
         const cfg = TABLE_CFG[currentTable];
         let text_lines = [];
@@ -505,8 +550,7 @@ window.exportTHR = function() {
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
-        let safeModuleName = currentModule ? currentModule.replace(/\s+/g, '_') : 'Export';
-        a.download = `Sunae_${safeModuleName}.thr`;
+        a.download = `${finalFileName}.thr`;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
