@@ -9,14 +9,13 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// Configurations des grilles de texte
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : DATE ET TEXTE ---
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     const yy = String(d.getFullYear()).slice(-2);
@@ -40,7 +39,6 @@ function getGridText() {
     return text;
 }
 
-// --- FONCTION DE SÉCURITÉ ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -76,30 +74,21 @@ function goToStep(step, moduleName = null) {
             simHr.style.display = 'none';
             bgSection.style.display = 'none';
             toolsDessin.style.display = 'none';
-            
             toolsTexte.style.display = 'block';
             nameInput.value = "";
             nameInput.placeholder = "Texte_Sunae";
-            if (canvas) {
-                canvas.isDrawingMode = false;
-                canvas.clear(); 
-            }
+            if (canvas) { canvas.isDrawingMode = false; canvas.clear(); }
             setTimeout(buildTextGrid, 50); 
-            
         } else {
             simSection.style.display = 'block';
             simHr.style.display = 'block';
             bgSection.style.display = 'block';
             toolsDessin.style.display = 'block';
-            
             toolsTexte.style.display = 'none';
             gridContainer.innerHTML = ''; 
             nameInput.value = "";
             nameInput.placeholder = getYYMMDD() + "Freedrawing";
-            if (canvas) {
-                canvas.isDrawingMode = (drawMode === 'freedraw');
-                updateTravelLines();
-            }
+            if (canvas) { canvas.isDrawingMode = (drawMode === 'freedraw'); updateTravelLines(); }
         }
     }
 }
@@ -119,7 +108,6 @@ function buildTextGrid() {
         xmax = cfg.aspect * ymax;
     }
     const scale_px = (canvas.width / 2.0) / xmax;
-
     const entry_w = cfg.w * scale_px;
     const entry_h = cfg.h * scale_px;
 
@@ -132,7 +120,6 @@ function buildTextGrid() {
         for (let c = 0; c < length; c++) {
             let char_x = start_x + (c * (cfg.w + cfg.spacing));
             let center_cx = char_x + (cfg.w / 2.0);
-            
             let px = center_px + center_cx * scale_px;
             let py = center_py - y_center * scale_px;
 
@@ -142,7 +129,6 @@ function buildTextGrid() {
             input.className = 'sunae-letter-box';
             input.dataset.row = r;
             input.dataset.col = c;
-            
             input.style.width = entry_w + 'px';
             input.style.height = entry_h + 'px';
             input.style.left = (px - entry_w / 2) + 'px';
@@ -172,6 +158,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
+// --- INITIALISATION DU CANEVAS ---
 function setupWorkspace(tableName, round, w, h) {
     currentTable = tableName;
     isRound = round;
@@ -197,31 +184,22 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- LE CŒUR DU CORRECTIF EST ICI ---
+    // LE SECRET EST LÀ : ON LIT LES COORDONNEES EXACTES SANS ALTERER L'OBJET
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
+        let offsetX = pathObj.left - pathObj.pathOffset.x;
+        let offsetY = pathObj.top - pathObj.pathOffset.y;
         let absPoints = []; 
 
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let relX = cmd[1] - pathObj.pathOffset.x;
-                let relY = cmd[2] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
-                let crX = cmd[1] - pathObj.pathOffset.x;
-                let crY = cmd[2] - pathObj.pathOffset.y;
-                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
-                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
-                
-                let rX = cmd[3] - pathObj.pathOffset.x;
-                let rY = cmd[4] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y}); 
             }
         }
@@ -233,11 +211,6 @@ function setupWorkspace(tableName, round, w, h) {
             sunaeAbsPoints: absPoints
         });
         
-        pathObj.absStartX = absPoints[0].x; 
-        pathObj.absStartY = absPoints[0].y;
-        pathObj.absEndX = absPoints[absPoints.length - 1].x; 
-        pathObj.absEndY = absPoints[absPoints.length - 1].y;
-
         updateTravelLines();
     });
 
@@ -281,6 +254,7 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
+// LECTURE EXACTE POUR LES TRAITS ROUGES
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
         return { x: stroke.sunaeAbsPoints[0].x, y: stroke.sunaeAbsPoints[0].y };
@@ -375,6 +349,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
+// --- LE SIMULATEUR ANIMÉ (POINT ROUGE FIXÉ) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -402,6 +377,7 @@ function setupSimulator() {
                 if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
                     if (o.type === 'path' && o.origPath) {
+                        // ON RESTAURE LES DONNÉES ORIGINALES POUR ÉVITER LES SAUTS
                         o.set({ 
                             path: o.origPath, left: o.origLeft, top: o.origTop, 
                             pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), 
@@ -471,8 +447,10 @@ function setupSimulator() {
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
                     
+                    // ON VERROUILLE L'AFFICHAGE
                     seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
 
+                    // ON PLACE LE POINT ROUGE SUR LES VRAIES COORDONNÉES EN ARRIÈRE PLAN
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
                         const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
                         currentDotPos = { x: seg.sunaeAbsPoints[targetIdx].x, y: seg.sunaeAbsPoints[targetIdx].y };
@@ -508,11 +486,9 @@ function setupSimulator() {
     });
 }
 
+// --- EXPORTATION ---
 window.exportTHR = function() {
-    let exportData = {
-        table: currentTable,
-        module: currentModule
-    };
+    let exportData = { table: currentTable, module: currentModule };
 
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = "";
