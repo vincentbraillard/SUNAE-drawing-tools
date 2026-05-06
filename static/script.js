@@ -15,7 +15,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : DATE ET TEXTE ---
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     const yy = String(d.getFullYear()).slice(-2);
@@ -111,6 +111,7 @@ function buildTextGrid() {
         xmax = cfg.aspect * ymax;
     }
     const scale_px = (canvas.width / 2.0) / xmax;
+
     const entry_w = cfg.w * scale_px;
     const entry_h = cfg.h * scale_px;
 
@@ -189,31 +190,24 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // LE SECRET DE LA PRÉCISION ABSOLUE : LA MATRICE DE TRANSFORMATION
+    // --- CORRECTION ABSOLUE DU DÉCALAGE ---
+    // On extrait les coordonnées brutes SANS AUCUNE MODIFICATION du dessin
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
+        let offsetX = pathObj.left - pathObj.pathOffset.x;
+        let offsetY = pathObj.top - pathObj.pathOffset.y;
+
         let absPoints = []; 
-        let matrix = pathObj.calcTransformMatrix();
 
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let pt = new fabric.Point(cmd[1] - pathObj.pathOffset.x, cmd[2] - pathObj.pathOffset.y);
-                let tPt = fabric.util.transformPoint(pt, matrix);
-                let p = sanitizeCoordinates(tPt.x, tPt.y, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y});
+                // On additionne simplement l'offset brut pour obtenir la position d'origine
+                absPoints.push({x: cmd[1] + offsetX, y: cmd[2] + offsetY});
             } else if (cmd[0] === 'Q') {
-                let pt1 = new fabric.Point(cmd[1] - pathObj.pathOffset.x, cmd[2] - pathObj.pathOffset.y);
-                let tPt1 = fabric.util.transformPoint(pt1, matrix);
-                let p1 = sanitizeCoordinates(tPt1.x, tPt1.y, isRound, canvas.width, canvas.height);
-                
-                let pt2 = new fabric.Point(cmd[3] - pathObj.pathOffset.x, cmd[4] - pathObj.pathOffset.y);
-                let tPt2 = fabric.util.transformPoint(pt2, matrix);
-                let p2 = sanitizeCoordinates(tPt2.x, tPt2.y, isRound, canvas.width, canvas.height);
-                
-                absPoints.push({x: p2.x, y: p2.y}); 
+                absPoints.push({x: cmd[3] + offsetX, y: cmd[4] + offsetY}); 
             }
         }
 
@@ -267,17 +261,17 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// LECTURE EXACTE POUR LES TRAITS ROUGES
+// LECTURE DIRECTE DANS LA MÉMOIRE (ZERO DECALAGE)
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
-        return { x: stroke.sunaeAbsPoints[0].x, y: stroke.sunaeAbsPoints[0].y };
+        return stroke.sunaeAbsPoints[0];
     }
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
 }
 
 function getStrokeEnd(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
-        return { x: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].x, y: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].y };
+        return stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1];
     }
     return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
@@ -362,7 +356,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- LE SIMULATEUR ANIMÉ (POINT ROUGE FIXÉ) ---
+// --- LE SIMULATEUR ANIMÉ FIXÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -496,11 +490,12 @@ function setupSimulator() {
     });
 }
 
-// --- EXPORTATION ---
 window.exportTHR = function() {
     let exportData = {
         table: currentTable,
-        module: currentModule
+        module: currentModule,
+        canvasWidth: canvas ? canvas.width : 600,
+        canvasHeight: canvas ? canvas.height : 600
     };
 
     let customName = document.getElementById('export-filename').value.trim();
