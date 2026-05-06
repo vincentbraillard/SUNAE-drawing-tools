@@ -134,7 +134,7 @@ def export_thr():
                 raw_points.append((cumulative_theta, math.hypot(start_x, start_y)))
             
             for r_idx, line in enumerate(text_lines):
-                line = line.upper() # SÉCURITÉ: Force majuscule
+                line = line.upper() 
                 y_center = cfg["y_centers"][r_idx]
                 y_base = y_center - (char_height / 2.0)
                 
@@ -223,8 +223,6 @@ def export_thr():
         elif module_name == "Dessin Libre":
             objects = data.get('drawing', {}).get('objects', [])
             
-            # CORRECTION : Le Python ignore les traits rouges envoyés par le web (isTravelLine)
-            # Il prend uniquement les vrais dessins (isUserStroke) et trace lui-même la ligne parfaite
             user_strokes = [obj for obj in objects if obj.get('isUserStroke')]
             user_strokes.sort(key=lambda x: x.get('createdAt', 0))
 
@@ -255,16 +253,25 @@ def export_thr():
                     stroke_pts.extend([(n_x1, n_y1), (n_x2, n_y2)])
 
                 if stroke_pts:
-                    # CORRECTION : Liaison propre entre le trait précédent et le nouveau trait
+                    clamped_stroke = []
+                    for nx, ny in stroke_pts:
+                        if cfg["is_round"]:
+                            mag = math.hypot(nx, ny)
+                            if mag > 1.0:
+                                nx, ny = nx/mag, ny/mag
+                        else:
+                            nx = max(-cfg["xmax"], min(nx, cfg["xmax"]))
+                            ny = max(-cfg["ymax"], min(ny, cfg["ymax"]))
+                        clamped_stroke.append((nx, ny))
+                    
                     if last_pt is not None:
-                        travel = discretize_points([last_pt, stroke_pts[0]])
+                        travel = discretize_points([last_pt, clamped_stroke[0]])
                         all_norm_points.extend(travel[1:]) 
                         
-                    smooth_stroke = discretize_points(stroke_pts)
+                    smooth_stroke = discretize_points(clamped_stroke)
                     all_norm_points.extend(smooth_stroke)
                     last_pt = smooth_stroke[-1]
 
-            # Conversion finale en Theta/Rho
             clean_points = []
             for p in all_norm_points:
                 if not clean_points or clean_points[-1] != p: clean_points.append(p)
@@ -277,18 +284,17 @@ def export_thr():
         if not raw_points:
             raw_points.append((0.0, 0.0))
 
-        # --- GÉNÉRATION FICHIER SÉCURISÉE ---
         file_content = "".join([f"{th:.5f} {rh:.5f}\n" for th, rh in raw_points])
         mem_file = io.BytesIO()
         mem_file.write(file_content.encode('utf-8'))
         mem_file.seek(0)
 
-        safe_name = module_name.replace(" ", "_") if module_name else "Export"
+        # Le nom du fichier n'est plus généré ici car on gère le téléchargement depuis le JS !
         
         try:
-            return send_file(mem_file, as_attachment=True, download_name=f"Sunae_{safe_name}.thr", mimetype='text/plain')
+            return send_file(mem_file, as_attachment=True, download_name="export.thr", mimetype='text/plain')
         except TypeError:
-            return send_file(mem_file, as_attachment=True, attachment_filename=f"Sunae_{safe_name}.thr", mimetype='text/plain')
+            return send_file(mem_file, as_attachment=True, attachment_filename="export.thr", mimetype='text/plain')
 
     except Exception as e:
         print("ERREUR SERVEUR FLASK :")
