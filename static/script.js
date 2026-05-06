@@ -16,6 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -134,7 +135,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP (ASYNCHRONE ET MATHS PURES) ---
+// --- MODULE SVG & TSP (ASYNCHRONE HAUTE RÉSOLUTION ET ZERO DÉCALAGE) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -176,76 +177,79 @@ window.optimizeSVG = async function() {
     updateProgress(0, 'Analyse Haute Définition...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    let matrix = currentSvgGroup.calcTransformMatrix();
     let rawStrokes = [];
-    
     let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    // 1. LECTURE PARFAITE (WYSIWYG ET MATHS DE BEZIER DIRECTES = Ultra rapide)
+    // 1. LECTURE PARFAITE WYSIWYG
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
-        let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
         
-        function addPoint(x, y, targetStroke) {
-            let ptX = x; let ptY = y;
-            if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-            let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-            targetStroke.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-        }
-
+        // FIX #1: On utilise UNIQUEMENT la matrice de l'objet (qui inclut déjà celle du groupe)
+        let objMat = obj.calcTransformMatrix(); 
+        
         if (obj.type === 'path') {
-            let currentStroke = [];
-            let sx = 0, sy = 0;
-
+            // FIX #2: Séparation correcte des sous-chemins (pour ne pas générer des milliers de mini-traits)
+            let subPaths = [];
+            let currentPathCmds = [];
+            
             obj.path.forEach(cmd => {
-                if (cmd[0] === 'M') {
-                    if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
-                    currentStroke = []; sx = cmd[1]; sy = cmd[2]; addPoint(sx, sy, currentStroke);
-                }
-                else if (cmd[0] === 'L') {
-                    sx = cmd[1]; sy = cmd[2]; addPoint(sx, sy, currentStroke);
-                }
-                else if (cmd[0] === 'Q') {
-                    let ex = cmd[3], ey = cmd[4];
-                    let steps = 15; // Haute résolution courbe Quadratique
-                    for (let t = 1; t <= steps; t++) {
-                        let r = t / steps;
-                        let x = Math.pow(1-r, 2)*sx + 2*(1-r)*r*cmd[1] + Math.pow(r, 2)*ex;
-                        let y = Math.pow(1-r, 2)*sy + 2*(1-r)*r*cmd[2] + Math.pow(r, 2)*ey;
-                        addPoint(x, y, currentStroke);
-                    }
-                    sx = ex; sy = ey;
-                }
-                else if (cmd[0] === 'C') {
-                    let ex = cmd[5], ey = cmd[6];
-                    let steps = 20; // Très haute résolution courbe Cubique
-                    for (let t = 1; t <= steps; t++) {
-                        let r = t / steps;
-                        let x = Math.pow(1-r,3)*sx + 3*Math.pow(1-r,2)*r*cmd[1] + 3*(1-r)*Math.pow(r,2)*cmd[3] + Math.pow(r,3)*ex;
-                        let y = Math.pow(1-r,3)*sy + 3*Math.pow(1-r,2)*r*cmd[2] + 3*(1-r)*Math.pow(r,2)*cmd[4] + Math.pow(r,3)*ey;
-                        addPoint(x, y, currentStroke);
-                    }
-                    sx = ex; sy = ey;
-                }
-                else if (cmd[0] === 'Z' || cmd[0] === 'z') {
-                    if (currentStroke.length > 0) currentStroke.push(currentStroke[0]);
-                    if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
-                    currentStroke = [];
+                if (cmd[0] === 'M' && currentPathCmds.length > 0) {
+                    subPaths.push(currentPathCmds);
+                    currentPathCmds = [cmd];
+                } else {
+                    currentPathCmds.push(cmd);
                 }
             });
-            if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
+            if(currentPathCmds.length > 0) subPaths.push(currentPathCmds);
+
+            let svgNS = "http://www.w3.org/2000/svg";
+            
+            for(let sp of subPaths) {
+                let pathEl = document.createElementNS(svgNS, "path");
+                pathEl.setAttribute('d', sp.map(cmd => cmd.join(' ')).join(' '));
+                let len = pathEl.getTotalLength();
+                if(len > 1) {
+                    let pts = [];
+                    // Échantillonnage fluide et précis
+                    let step = 2; 
+                    for(let l=0; l<=len; l+=step) {
+                        let pt = pathEl.getPointAtLength(l);
+                        let ptX = pt.x; let ptY = pt.y;
+                        if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                        let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                        pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                    }
+                    let pt = pathEl.getPointAtLength(len);
+                    let ptX = pt.x; let ptY = pt.y;
+                    if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                    
+                    if(pts.length > 1) rawStrokes.push(pts);
+                }
+            }
         }
         else if (obj.type === 'polygon' || obj.type === 'polyline') {
             let pts = [];
-            obj.points.forEach(pt => addPoint(pt.x, pt.y, pts));
+            obj.points.forEach(pt => {
+                let ptX = pt.x; let ptY = pt.y;
+                if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+            });
             if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
             if (pts.length > 1) rawStrokes.push(pts);
         }
         else if (obj.type === 'line') {
-            let pts = [];
-            addPoint(obj.x1, obj.y1, pts); addPoint(obj.x2, obj.y2, pts);
-            rawStrokes.push(pts);
+            let p1x = obj.x1, p1y = obj.y1, p2x = obj.x2, p2y = obj.y2;
+            if (obj.pathOffset) { p1x -= obj.pathOffset.x; p1y -= obj.pathOffset.y; p2x -= obj.pathOffset.x; p2y -= obj.pathOffset.y; }
+            let t1 = fabric.util.transformPoint({x: p1x, y: p1y}, objMat);
+            let t2 = fabric.util.transformPoint({x: p2x, y: p2y}, objMat);
+            rawStrokes.push([
+                sanitizeCoordinates(t1.x, t1.y, isRound, canvas.width, canvas.height),
+                sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
+            ]);
         }
 
         if (i % 20 === 0) {
@@ -259,7 +263,7 @@ window.optimizeSVG = async function() {
     updateProgress(40, 'Calcul TSP...');
     await new Promise(r => setTimeout(r, 20));
 
-    // 2. TSP : CHEMIN LE PLUS COURT (Distance sans racine carrée = vitesse x10)
+    // 2. TSP : CHEMIN LE PLUS COURT
     let optimized = [];
     let unvisited = [...rawStrokes];
     optimized.push(unvisited.shift());
@@ -419,61 +423,47 @@ function setupBackgroundControls() {
     });
 }
 
-// --- MOTEUR SANDIFY : ROUTAGE PAR LA BOUNDING BOX DU DESSIN ---
-function getBBRouting(p1, p2, bbox) {
-    let pts = [p1];
-    
-    // Sortie horizontale (gauche ou droite) puis verticale pour contourner le dessin
-    let safeX1 = (p1.x < (bbox.left + bbox.right)/2) ? bbox.left : bbox.right;
-    let safeY1 = (p1.y < (bbox.top + bbox.bottom)/2) ? bbox.top : bbox.bottom;
-    
-    let safeX2 = (p2.x < (bbox.left + bbox.right)/2) ? bbox.left : bbox.right;
-    let safeY2 = (p2.y < (bbox.top + bbox.bottom)/2) ? bbox.top : bbox.bottom;
-
-    pts.push({x: safeX1, y: p1.y});
-    pts.push({x: safeX1, y: safeY1});
-    pts.push({x: safeX2, y: safeY1});
-    pts.push({x: safeX2, y: safeY2});
-    pts.push({x: safeX2, y: p2.y});
-    pts.push(p2);
-    
-    return pts.map(p => sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height));
+// LECTURE DIRECTE DANS LA MÉMOIRE (ZERO DECALAGE)
+function getStrokeStart(stroke) {
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
+        return stroke.sunaeAbsPoints[0];
+    }
+    return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
 }
 
+function getStrokeEnd(stroke) {
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
+        return stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1];
+    }
+    return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+}
+
+// --- LIAISON EN LIGNE DROITE (LE STANDARD SANDIFY) ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
+
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     
-    if(userStrokes.length < 2) return;
-
-    // Calcul de l'enveloppe du dessin avec une marge de 10px
-    let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
-    userStrokes.forEach(s => s.sunaeAbsPoints && s.sunaeAbsPoints.forEach(p => {
-        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-    }));
-    let bbox = { left: Math.max(2, minX - 10), top: Math.max(2, minY - 10), right: Math.min(canvas.width - 2, maxX + 10), bottom: Math.min(canvas.height - 2, maxY + 10) };
-
     for (let i = 1; i < userStrokes.length; i++) {
-        let s1 = userStrokes[i - 1].sunaeAbsPoints;
-        let s2 = userStrokes[i].sunaeAbsPoints;
-        if(s1 && s2 && s1.length > 0 && s2.length > 0) {
-            let pts = getBBRouting(s1[s1.length-1], s2[0], bbox);
-            let d = "M " + pts[0].x + " " + pts[0].y;
-            for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
-            
-            const redLine = new fabric.Path(d, {
-                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], fill: '', opacity: 0.7,
-                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1, sunaeAbsPoints: pts
+        const prevEnd = getStrokeEnd(userStrokes[i - 1]);
+        const currStart = getStrokeStart(userStrokes[i]);
+
+        if (prevEnd && currStart) {
+            // FIX #3: Ligne droite pure, le TSP se charge de minimiser la distance !
+            const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
+                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
+                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1,
+                sunaeAbsPoints: [prevEnd, currStart] // Indispensable pour que la bille suive le trait
             });
-            canvas.add(redLine); redLine.sendToBack();
+            canvas.add(redLine);
+            redLine.sendToBack();
         }
     }
     if (bgImageObj) bgImageObj.sendToBack();
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ (POINT ROUGE FIXÉ) ---
+// --- LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
