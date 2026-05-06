@@ -1,121 +1,164 @@
-/* --- Variables globales pour les couleurs --- */
-:root {
-    --bg-main: #0e1117;       
-    --bg-card: #171d2b;       
-    --border-card: #2a3441;
-    --text-main: #ffffff;
-    --text-muted: #e2e8f0;
-    --accent-gold: #dfc391;   
-    --sand-color: #f4ebd8;    
-    --line-blue: #2980b9;
-    --line-red: #d32f2f;
-}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sunae Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
 
-/* --- Base --- */
-body {
-    background-color: var(--bg-main);
-    color: var(--text-main);
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 0;
-    padding: 20px;
-}
+    <header class="header">
+        <div class="logo-container">
+            <img src="{{ url_for('static', filename='2023_LOGO_SUNAE.png') }}" alt="Sunae Logo" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';">
+            <h1 id="text-logo" style="display:none; color: #8fa89b; text-align: center;">SUNAE STUDIO</h1>
+        </div>
+        <hr>
+    </header>
 
-hr {
-    border: 0;
-    border-top: 1px solid var(--border-card);
-    margin: 20px 0;
-}
+    <!-- Étape 1 : Choix de l'expérience -->
+    <section id="step-1" class="step-section active">
+        <h2 class="section-title">1. Sélectionnez votre Expérience</h2>
+        <div class="card-grid">
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_texte.png') }}" alt="Texte">
+                <h3>Écrire un Texte</h3>
+                <p>Incrustez vos mots préférés dans le sable.</p>
+                <button onclick="goToStep(2, 'Texte Automatique')">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_dessin.png') }}" alt="Dessin">
+                <h3>Dessin Libre</h3>
+                <p>Laissez parler votre créativité.</p>
+                <button onclick="goToStep(2, 'Dessin Libre')">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_svg.png') }}" alt="SVG">
+                <h3>Convertir Fichier SVG</h3>
+                <p>Transformez vos logos et motifs existants.</p>
+                <button onclick="goToStep(2, 'Fichier SVG')">Choisir</button>
+            </div>
+        </div>
+    </section>
 
-/* --- En-tête --- */
-.logo-container {
-    display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
-}
-.logo-container img { max-width: 200px; height: auto; }
+    <!-- Étape 2 : Choix de la Table -->
+    <section id="step-2" class="step-section">
+        <button class="back-button" onclick="goToStep(1)">⬅ Retour aux expériences</button>
+        <h2 class="section-title">2. Votre Table Sunae</h2>
+        <div class="card-grid">
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_dimension L.png') }}" alt="Dimension L" class="table-img">
+                <h3>Dimension L</h3>
+                <p>Rectangulaire - 2000x1000mm</p>
+                <button onclick="setupWorkspace('Dimension L', false, 800, 400)">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_Origin S.png') }}" alt="Origin S" class="table-img">
+                <h3>Origin S</h3>
+                <p>Ronde - Ø850mm</p>
+                <button onclick="setupWorkspace('Origin S', true, 600, 600)">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_dimension S.png') }}" alt="Dimension S" class="table-img">
+                <h3>Dimension S</h3>
+                <p>Rectangulaire - 1400x700mm</p>
+                <button onclick="setupWorkspace('Dimension S', false, 700, 350)">Choisir</button>
+            </div>
+        </div>
+    </section>
 
-/* --- Sections d'étapes --- */
-.step-section {
-    display: none; max-width: 1200px; margin: 0 auto;
-}
-.step-section.active { display: block; }
-.section-title { text-align: center; margin-bottom: 30px; font-weight: 600; }
+    <!-- Étape 3 : Espace de Travail -->
+    <section id="step-3" class="step-section">
+        <div class="workspace-header">
+            <button class="back-button" onclick="goToStep(2)">⬅ Changer de table</button>
+            <h3 class="workspace-title" id="workspace-title">Studio</h3>
+        </div>
+        <hr>
 
-/* --- Grille de cartes --- */
-.card-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; justify-content: center;
-}
+        <div id="module-workspace" style="display: none;">
+            
+            <!-- MASQUÉ EN MODE TEXTE -->
+            <div id="simulation-section" class="simulator-section">
+                <h4>Simulation du parcours de la bille</h4>
+                <input type="range" id="bille-slider" min="0" max="100" value="100">
+            </div>
+            <hr id="sim-hr">
 
-.card {
-    background-color: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-card);
-    padding: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); text-align: center; transition: transform 0.2s;
-}
-.card:hover { transform: translateY(-5px); }
-.card img { width: 100%; border-radius: 8px; margin-bottom: 15px; object-fit: cover; }
-.card img.table-img { width: 60%; margin: 0 auto 15px auto; display: block; }
-.card h3 { margin-top: 0; margin-bottom: 10px; }
-.card p { color: var(--text-muted); font-size: 0.9em; margin-bottom: 20px; }
+            <div class="workspace-grid">
+                <!-- Outils à gauche -->
+                <div class="tools-panel">
+                    
+                    <!-- MENU DESSIN LIBRE -->
+                    <div id="tools-dessin">
+                        <h3>Outils de Dessin</h3>
+                        <div class="tool-group">
+                            <label>Mode :</label><br>
+                            <input type="radio" id="mode-draw" name="drawMode" value="freedraw" checked>
+                            <label for="mode-draw">✏️ Dessiner</label><br>
+                            <input type="radio" id="mode-line" name="drawMode" value="line">
+                            <label for="mode-line">📏 Ligne Droite</label>
+                        </div>
+                        <div class="action-buttons">
+                            <button onclick="undoStroke()">↩ Étape Préc.</button>
+                            <button onclick="resetCanvas()">🗑 Reset</button>
+                        </div>
+                    </div>
 
-/* --- Boutons --- */
-button {
-    background-color: transparent; border: 1px solid var(--accent-gold); color: var(--text-main);
-    border-radius: 6px; padding: 8px 20px; cursor: pointer; transition: all 0.3s ease; font-size: 1rem;
-}
-button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
-.back-button { margin-bottom: 20px; font-size: 0.9rem; padding: 5px 15px; }
-.primary-btn { background-color: #ff4b4b; border: none; color: white; width: 100%; padding: 12px; font-weight: bold; margin-top: 20px; }
-.primary-btn:hover { background-color: #ff3333; color: white; }
-.upload-btn {
-    display: inline-block; background-color: transparent; border: 1px solid #555; color: var(--text-main);
-    border-radius: 6px; padding: 8px 15px; cursor: pointer; font-size: 0.9rem; margin-bottom: 15px; text-align: center;
-}
-.upload-btn:hover { background-color: #333; }
+                    <!-- MENU TEXTE AUTOMATIQUE -->
+                    <div id="tools-texte" style="display: none;">
+                        <h3>Génération de Texte</h3>
+                        <!-- Plus d'input texte classique ici, remplacé par la grille Sunae ! -->
+                        <div style="background: rgba(46, 204, 113, 0.1); border-left: 3px solid #2ecc71; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0;">
+                            ℹ️ <b>Police Sunae :</b> Tapez directement vos lettres dans les cases qui apparaissent sur la table. La bille les tracera en continu.
+                        </div>
+                        <div class="action-buttons" style="margin-top: 10px;">
+                            <button onclick="resetTextGrid()" style="width: 100%;">🗑 Effacer le texte</button>
+                        </div>
+                    </div>
+                    
+                    <!-- MASQUÉ EN MODE TEXTE -->
+                    <div id="background-section">
+                        <hr>
+                        <h3>Image de fond</h3>
+                        <input type="file" id="bg-upload" accept="image/png, image/jpeg" style="display: none;">
+                        <label for="bg-upload" class="upload-btn">Importer une image</label>
+                        
+                        <div class="slider-group">
+                            <label for="bg-scale">Échelle: <span id="val-scale">1.0</span></label>
+                            <input type="range" id="bg-scale" min="0.1" max="3.0" step="0.05" value="1.0">
+                        </div>
+                        <div class="slider-group">
+                            <label for="bg-angle">Rotation (°): <span id="val-angle">0</span></label>
+                            <input type="range" id="bg-angle" min="-180" max="180" value="0">
+                        </div>
+                        <div class="slider-group">
+                            <label for="bg-pan-x">Déplacer X: <span id="val-pan-x">0</span></label>
+                            <input type="range" id="bg-pan-x" min="-400" max="400" value="0">
+                        </div>
+                        <div class="slider-group">
+                            <label for="bg-pan-y">Déplacer Y: <span id="val-pan-y">0</span></label>
+                            <input type="range" id="bg-pan-y" min="-400" max="400" value="0">
+                        </div>
+                    </div>
 
-/* --- Espace de travail --- */
-.workspace-header { display: flex; align-items: center; }
-.workspace-title { margin: 0 auto; font-size: 1.5rem; }
-.workspace-grid { display: grid; grid-template-columns: 1fr 3fr; gap: 30px; margin-top: 20px; }
+                    <br>
+                    <button class="primary-btn" onclick="exportTHR()">💾 EXPORTER (.THR)</button>
+                </div>
 
-.tools-panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-card); padding-bottom: 10px; }
-.tool-group { margin-bottom: 20px; }
-.action-buttons { display: flex; gap: 10px; margin-bottom: 20px; }
-.action-buttons button { flex: 1; font-size: 0.8rem; padding: 5px; }
-.slider-group { margin-bottom: 15px; }
-.slider-group label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: var(--text-muted); }
-.slider-group input[type="range"] { width: 100%; }
+                <!-- Zone de dessin à droite -->
+                <div class="canvas-panel">
+                    <div id="canvas-container" style="position: relative;">
+                        <!-- Canevas classique pour le Dessin Libre -->
+                        <canvas id="sunae-canvas"></canvas>
+                        <!-- Surcouche pour les cases de texte Sunae (Activée en mode Texte) -->
+                        <div id="text-grid-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-/* --- Le Canevas --- */
-.canvas-panel { display: flex; justify-content: center; align-items: flex-start; }
-#canvas-container {
-    background-color: var(--sand-color); border: 4px dashed #bdc3c7; position: relative; overflow: hidden;
-}
-.canvas-container { margin: 0 auto; }
-
-/* --- Le Slider Chrome --- */
-.simulator-section { text-align: center; }
-#bille-slider {
-    -webkit-appearance: none; width: 100%; height: 8px; background: #d4c5b0; border-radius: 4px; outline: none; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4); margin-top: 15px;
-}
-#bille-slider::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none; width: 28px; height: 28px; border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%);
-    box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5); cursor: pointer;
-}
-
-/* --- Les cases de texte Sunae --- */
-.sunae-letter-box {
-    position: absolute;
-    text-align: center;
-    font-family: 'Courier New', Courier, monospace;
-    font-weight: bold;
-    font-size: 24px;
-    border: 1px solid #7f8c8d;
-    background: transparent;
-    color: #2c3e50;
-    pointer-events: auto; /* Permet de cliquer dessus */
-    box-sizing: border-box;
-    text-transform: uppercase;
-}
-.sunae-letter-box:focus {
-    border: 2px solid #e74c3c;
-    background: rgba(255, 255, 255, 0.5);
-    outline: none;
-}
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
