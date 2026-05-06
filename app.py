@@ -52,7 +52,6 @@ def get_custom_alphabet():
         ' ': [(0.0, 0.0), (1.0, 0.0)]
     }
 
-# --- 2. CONFIGURATIONS DES MACHINES ---
 TABLE_CONFIGS = {
     "Origin S": { "is_round": True, "rows": [6, 8, 8, 6], "y_centers": [0.45, 0.15, -0.15, -0.45], "w": 0.20, "h": 0.24, "spacing": 0.00, "aspect": 1.0 },
     "Dimension S": { "is_round": False, "rows": [14, 14, 14], "y_centers": [0.25, 0.0, -0.25], "w": 0.11, "h": 0.15, "spacing": 0.015, "aspect": 1300.0 / 600.0 },
@@ -68,7 +67,7 @@ for name, cfg in TABLE_CONFIGS.items():
         cfg["ymax"] = 1.0
         cfg["xmax"] = 1.0
 
-# --- 3. FONCTIONS MATHS ET ROUTAGE ---
+# --- 2. FONCTIONS MATHS ET ROUTAGE ---
 def discretize_points(key_points, max_segment_length=0.015):
     if not key_points or len(key_points) < 2: return key_points
     smooth_path = [key_points[0]]
@@ -99,7 +98,7 @@ def generate_arc_polar(theta_start, theta_end, steps=40):
         pts.append((t, 1.0))
     return pts, theta_start + delta
 
-# --- 4. SERVEUR FLASK ---
+# --- 3. SERVEUR FLASK ---
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -135,7 +134,7 @@ def export_thr():
                 raw_points.append((cumulative_theta, math.hypot(start_x, start_y)))
             
             for r_idx, line in enumerate(text_lines):
-                line = line.upper() # SÉCURITÉ: Force majuscule
+                line = line.upper()
                 y_center = cfg["y_centers"][r_idx]
                 y_base = y_center - (char_height / 2.0)
                 
@@ -234,10 +233,11 @@ def export_thr():
             for obj in objects:
                 if obj.get('isUserStroke') or obj.get('isTravelLine'):
                     if obj.get('type') == 'path':
-                        for cmd in obj.get('path', []):
-                            if len(cmd) >= 3:
-                                nx = (cmd[-2] - center_x) / max_radius
-                                ny = (center_y - cmd[-1]) / max_radius
+                        abs_points = obj.get('sunaeAbsPoints')
+                        if abs_points:
+                            for pt in abs_points:
+                                nx = (pt['x'] - center_x) / max_radius
+                                ny = (center_y - pt['y']) / max_radius
                                 all_norm_points.append((nx, ny))
                     elif obj.get('type') == 'line':
                         n_x1 = (obj.get('x1', 0) - center_x) / max_radius
@@ -266,7 +266,6 @@ def export_thr():
 
         safe_name = module_name.replace(" ", "_") if module_name else "Export"
         
-        # Double sécurité pour la compatibilité avec toutes les versions de Flask
         try:
             return send_file(mem_file, as_attachment=True, download_name=f"Sunae_{safe_name}.thr", mimetype='text/plain')
         except TypeError:
