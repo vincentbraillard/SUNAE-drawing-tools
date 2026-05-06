@@ -15,7 +15,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : NOM DU FICHIER ---
+// --- HELPERS : DATE ET TEXTE ---
 function getYYMMDD() {
     const d = new Date();
     const yy = String(d.getFullYear()).slice(-2);
@@ -74,16 +74,19 @@ function goToStep(step, moduleName = null) {
             simHr.style.display = 'none';
             bgSection.style.display = 'none';
             toolsDessin.style.display = 'none';
+            
             toolsTexte.style.display = 'block';
             nameInput.value = "";
             nameInput.placeholder = "Texte_Sunae";
             if (canvas) { canvas.isDrawingMode = false; canvas.clear(); }
             setTimeout(buildTextGrid, 50); 
+            
         } else {
             simSection.style.display = 'block';
             simHr.style.display = 'block';
             bgSection.style.display = 'block';
             toolsDessin.style.display = 'block';
+            
             toolsTexte.style.display = 'none';
             gridContainer.innerHTML = ''; 
             nameInput.value = "";
@@ -120,6 +123,7 @@ function buildTextGrid() {
         for (let c = 0; c < length; c++) {
             let char_x = start_x + (c * (cfg.w + cfg.spacing));
             let center_cx = char_x + (cfg.w / 2.0);
+            
             let px = center_px + center_cx * scale_px;
             let py = center_py - y_center * scale_px;
 
@@ -129,6 +133,7 @@ function buildTextGrid() {
             input.className = 'sunae-letter-box';
             input.dataset.row = r;
             input.dataset.col = c;
+            
             input.style.width = entry_w + 'px';
             input.style.height = entry_h + 'px';
             input.style.left = (px - entry_w / 2) + 'px';
@@ -184,23 +189,31 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // LE SECRET EST LÀ : ON LIT LES COORDONNEES EXACTES SANS ALTERER L'OBJET
+    // LE SECRET DE LA PRÉCISION ABSOLUE : LA MATRICE DE TRANSFORMATION
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
-        let offsetX = pathObj.left - pathObj.pathOffset.x;
-        let offsetY = pathObj.top - pathObj.pathOffset.y;
         let absPoints = []; 
+        let matrix = pathObj.calcTransformMatrix();
 
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
+                let pt = new fabric.Point(cmd[1] - pathObj.pathOffset.x, cmd[2] - pathObj.pathOffset.y);
+                let tPt = fabric.util.transformPoint(pt, matrix);
+                let p = sanitizeCoordinates(tPt.x, tPt.y, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
-                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y}); 
+                let pt1 = new fabric.Point(cmd[1] - pathObj.pathOffset.x, cmd[2] - pathObj.pathOffset.y);
+                let tPt1 = fabric.util.transformPoint(pt1, matrix);
+                let p1 = sanitizeCoordinates(tPt1.x, tPt1.y, isRound, canvas.width, canvas.height);
+                
+                let pt2 = new fabric.Point(cmd[3] - pathObj.pathOffset.x, cmd[4] - pathObj.pathOffset.y);
+                let tPt2 = fabric.util.transformPoint(pt2, matrix);
+                let p2 = sanitizeCoordinates(tPt2.x, tPt2.y, isRound, canvas.width, canvas.height);
+                
+                absPoints.push({x: p2.x, y: p2.y}); 
             }
         }
 
@@ -377,7 +390,6 @@ function setupSimulator() {
                 if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
                     if (o.type === 'path' && o.origPath) {
-                        // ON RESTAURE LES DONNÉES ORIGINALES POUR ÉVITER LES SAUTS
                         o.set({ 
                             path: o.origPath, left: o.origLeft, top: o.origTop, 
                             pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), 
@@ -447,10 +459,8 @@ function setupSimulator() {
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
                     
-                    // ON VERROUILLE L'AFFICHAGE
                     seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
 
-                    // ON PLACE LE POINT ROUGE SUR LES VRAIES COORDONNÉES EN ARRIÈRE PLAN
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
                         const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
                         currentDotPos = { x: seg.sunaeAbsPoints[targetIdx].x, y: seg.sunaeAbsPoints[targetIdx].y };
@@ -488,7 +498,10 @@ function setupSimulator() {
 
 // --- EXPORTATION ---
 window.exportTHR = function() {
-    let exportData = { table: currentTable, module: currentModule };
+    let exportData = {
+        table: currentTable,
+        module: currentModule
+    };
 
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = "";
