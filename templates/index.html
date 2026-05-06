@@ -1,1 +1,152 @@
 
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sunae Studio</title>
+    <!-- Lien vers notre fichier de style CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <!-- En-tête avec le logo -->
+    <header class="header">
+        <div class="logo-container">
+            <!-- Remplace "logo.png" par le nom de ton fichier image si tu en as un, sinon le texte s'affichera -->
+            <img src="{{ url_for('static', filename='2023_LOGO_SUNAE.png') }}" alt="Sunae Logo" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';">
+            <h1 id="text-logo" style="display:none; color: #8fa89b; text-align: center;">SUNAE STUDIO</h1>
+        </div>
+        <hr>
+    </header>
+
+    <!-- Étape 1 : Choix de l'expérience -->
+    <section id="step-1" class="step-section active">
+        <h2 class="section-title">1. Sélectionnez votre Expérience</h2>
+        <div class="card-grid">
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_texte.png') }}" alt="Texte">
+                <h3>Écrire un Texte</h3>
+                <p>Incrustez vos mots préférés dans le sable.</p>
+                <button onclick="goToStep(2, 'Texte Automatique')">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_dessin.png') }}" alt="Dessin">
+                <h3>Dessin Libre</h3>
+                <p>Laissez parler votre créativité.</p>
+                <button onclick="goToStep(2, 'Dessin Libre')">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='img_svg.png') }}" alt="SVG">
+                <h3>Convertir Fichier SVG</h3>
+                <p>Transformez vos logos et motifs existants.</p>
+                <button onclick="goToStep(2, 'Fichier SVG')">Choisir</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Étape 2 : Choix de la Table -->
+    <section id="step-2" class="step-section">
+        <button class="back-button" onclick="goToStep(1)">⬅ Retour aux expériences</button>
+        <h2 class="section-title">2. Votre Table Sunae</h2>
+        <div class="card-grid">
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_dimension L.png') }}" alt="Dimension L" class="table-img">
+                <h3>Dimension L</h3>
+                <p>Rectangulaire - 2000x1000mm</p>
+                <button onclick="setupWorkspace('Dimension L', false, 800, 400)">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_Origin S.png') }}" alt="Origin S" class="table-img">
+                <h3>Origin S</h3>
+                <p>Ronde - Ø850mm</p>
+                <button onclick="setupWorkspace('Origin S', true, 600, 600)">Choisir</button>
+            </div>
+            <div class="card">
+                <img src="{{ url_for('static', filename='carre_dimension S.png') }}" alt="Dimension S" class="table-img">
+                <h3>Dimension S</h3>
+                <p>Rectangulaire - 1400x700mm</p>
+                <button onclick="setupWorkspace('Dimension S', false, 700, 350)">Choisir</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Étape 3 : Espace de Travail -->
+    <section id="step-3" class="step-section">
+        <div class="workspace-header">
+            <button class="back-button" onclick="goToStep(2)">⬅ Changer de table</button>
+            <h3 class="workspace-title" id="workspace-title">Studio</h3>
+        </div>
+        <hr>
+
+        <!-- Container pour le module Dessin Libre (les autres seront ajoutés plus tard) -->
+        <div id="module-dessin-libre" style="display: none;">
+            
+            <div class="simulator-section">
+                <h4>Simulation du parcours de la bille</h4>
+                <input type="range" id="bille-slider" min="0" max="100" value="100">
+            </div>
+            <hr>
+
+            <div class="workspace-grid">
+                <!-- Outils à gauche -->
+                <div class="tools-panel">
+                    <h3>Outils de Dessin</h3>
+                    <div class="tool-group">
+                        <label>Mode :</label><br>
+                        <input type="radio" id="mode-draw" name="drawMode" value="freedraw" checked>
+                        <label for="mode-draw">✏️ Dessiner</label><br>
+                        <input type="radio" id="mode-line" name="drawMode" value="line">
+                        <label for="mode-line">📏 Ligne Droite</label>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button onclick="undoStroke()">↩ Étape Préc.</button>
+                        <button onclick="resetCanvas()">🗑 Reset</button>
+                    </div>
+                    
+                    <hr>
+                    <h3>Image de fond</h3>
+                    <!-- On cache l'input file original pour le styliser avec un label -->
+                    <input type="file" id="bg-upload" accept="image/png, image/jpeg" style="display: none;">
+                    <label for="bg-upload" class="upload-btn">Importer une image</label>
+                    
+                    <div class="slider-group">
+                        <label for="bg-scale">Échelle: <span id="val-scale">1.0</span></label>
+                        <input type="range" id="bg-scale" min="0.1" max="3.0" step="0.05" value="1.0">
+                    </div>
+                    <div class="slider-group">
+                        <label for="bg-angle">Rotation (°): <span id="val-angle">0</span></label>
+                        <input type="range" id="bg-angle" min="-180" max="180" value="0">
+                    </div>
+                    <div class="slider-group">
+                        <label for="bg-pan-x">Déplacer X: <span id="val-pan-x">0</span></label>
+                        <input type="range" id="bg-pan-x" min="-400" max="400" value="0">
+                    </div>
+                    <div class="slider-group">
+                        <label for="bg-pan-y">Déplacer Y: <span id="val-pan-y">0</span></label>
+                        <input type="range" id="bg-pan-y" min="-400" max="400" value="0">
+                    </div>
+
+                    <br>
+                    <button class="primary-btn" onclick="exportTHR()">💾 EXPORTER (.THR)</button>
+                </div>
+
+                <!-- Zone de dessin à droite -->
+                <div class="canvas-panel">
+                    <!-- Le conteneur du canevas. Le CSS définira sa forme et son style -->
+                    <div id="canvas-container">
+                        <!-- Nous utiliserons la bibliothèque Fabric.js pour gérer le dessin ici -->
+                        <canvas id="sunae-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Inclusion de la bibliothèque de dessin (Fabric.js) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <!-- Lien vers notre fichier de logique JavaScript -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
