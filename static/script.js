@@ -9,13 +9,14 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
+// Configurations des grilles de texte
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : DATE ET TEXTE DE LA GRILLE ---
+// --- HELPERS : DATE ET TEXTE ---
 function getYYMMDD() {
     const d = new Date();
     const yy = String(d.getFullYear()).slice(-2);
@@ -39,7 +40,7 @@ function getGridText() {
     return text;
 }
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES ---
+// --- FONCTION DE SÉCURITÉ ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -52,7 +53,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// --- 1. NAVIGATION DES ÉTAPES ---
+// --- NAVIGATION ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -148,7 +149,6 @@ function buildTextGrid() {
             input.style.top = (py - entry_h / 2) + 'px';
 
             input.addEventListener('keyup', function(e) {
-                // MISE A JOUR DYNAMIQUE DU NOM DU FICHIER EN FONCTION DE LA FRAPPE
                 let currentText = getGridText();
                 document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
 
@@ -197,22 +197,31 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
+    // --- LE CŒUR DU CORRECTIF EST ICI ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
-        let offsetX = pathObj.left - pathObj.pathOffset.x;
-        let offsetY = pathObj.top - pathObj.pathOffset.y;
-
         let absPoints = []; 
-        
+
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
+                let relX = cmd[1] - pathObj.pathOffset.x;
+                let relY = cmd[2] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
-                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
+                let crX = cmd[1] - pathObj.pathOffset.x;
+                let crY = cmd[2] - pathObj.pathOffset.y;
+                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
+                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
+                
+                let rX = cmd[3] - pathObj.pathOffset.x;
+                let rY = cmd[4] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y}); 
             }
         }
@@ -224,6 +233,11 @@ function setupWorkspace(tableName, round, w, h) {
             sunaeAbsPoints: absPoints
         });
         
+        pathObj.absStartX = absPoints[0].x; 
+        pathObj.absStartY = absPoints[0].y;
+        pathObj.absEndX = absPoints[absPoints.length - 1].x; 
+        pathObj.absEndY = absPoints[absPoints.length - 1].y;
+
         updateTravelLines();
     });
 
@@ -500,7 +514,6 @@ window.exportTHR = function() {
         module: currentModule
     };
 
-    // --- LOGIQUE POUR LE NOM DU FICHIER ---
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = "";
 
