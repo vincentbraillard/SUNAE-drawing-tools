@@ -16,7 +16,6 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -135,7 +134,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP (ASYNCHRONE HAUTE RÉSOLUTION) ---
+// --- MODULE SVG & TSP (ASYNCHRONE ET MATHS PURES) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -168,78 +167,101 @@ window.optimizeSVG = async function() {
     const pBar = document.getElementById('svg-progress-bar');
     const pText = document.getElementById('svg-progress-text');
 
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    pContainer.style.display = 'block';
+    btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     
     function updateProgress(pct, textMsg) {
-        pBar.style.width = pct + '%';
-        pText.innerText = textMsg + ' (' + pct + '%)';
+        pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
     updateProgress(0, 'Analyse Haute Définition...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let matrix = currentSvgGroup.calcTransformMatrix();
-    let strokes = [];
+    let rawStrokes = [];
     
     let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    // 1. LECTURE HAUTE RÉSOLUTION ET WYSIWYG
+    // 1. LECTURE PARFAITE (WYSIWYG ET MATHS DE BEZIER DIRECTES = Ultra rapide)
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
         let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
         
-        if (obj.type === 'path') {
-            let pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
-            let len = pathEl.getTotalLength();
-            if(len > 1) {
-                let pts = [];
-                // RESOLUTION MAXIMALE : 1 pixel (Fini l'effet "sous-échantillonné")
-                let step = 1; 
-                for(let l=0; l<=len; l+=step) {
-                    let pt = pathEl.getPointAtLength(l);
-                    let ptX = pt.x; let ptY = pt.y;
-                    if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                }
-                let pt = pathEl.getPointAtLength(len);
-                let ptX = pt.x; let ptY = pt.y;
-                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                
-                if(pts.length > 1) strokes.push(pts);
-            }
-        }
-        else if (obj.type === 'polygon' || obj.type === 'polyline') {
-            let pts = obj.points.map(pt => {
-                let ptX = pt.x; let ptY = pt.y;
-                if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                return sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
-            });
-            if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
-            if (pts.length > 1) strokes.push(pts);
+        function addPoint(x, y, targetStroke) {
+            let ptX = x; let ptY = y;
+            if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+            let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+            targetStroke.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
         }
 
-        if (i % 10 === 0) {
+        if (obj.type === 'path') {
+            let currentStroke = [];
+            let sx = 0, sy = 0;
+
+            obj.path.forEach(cmd => {
+                if (cmd[0] === 'M') {
+                    if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
+                    currentStroke = []; sx = cmd[1]; sy = cmd[2]; addPoint(sx, sy, currentStroke);
+                }
+                else if (cmd[0] === 'L') {
+                    sx = cmd[1]; sy = cmd[2]; addPoint(sx, sy, currentStroke);
+                }
+                else if (cmd[0] === 'Q') {
+                    let ex = cmd[3], ey = cmd[4];
+                    let steps = 15; // Haute résolution courbe Quadratique
+                    for (let t = 1; t <= steps; t++) {
+                        let r = t / steps;
+                        let x = Math.pow(1-r, 2)*sx + 2*(1-r)*r*cmd[1] + Math.pow(r, 2)*ex;
+                        let y = Math.pow(1-r, 2)*sy + 2*(1-r)*r*cmd[2] + Math.pow(r, 2)*ey;
+                        addPoint(x, y, currentStroke);
+                    }
+                    sx = ex; sy = ey;
+                }
+                else if (cmd[0] === 'C') {
+                    let ex = cmd[5], ey = cmd[6];
+                    let steps = 20; // Très haute résolution courbe Cubique
+                    for (let t = 1; t <= steps; t++) {
+                        let r = t / steps;
+                        let x = Math.pow(1-r,3)*sx + 3*Math.pow(1-r,2)*r*cmd[1] + 3*(1-r)*Math.pow(r,2)*cmd[3] + Math.pow(r,3)*ex;
+                        let y = Math.pow(1-r,3)*sy + 3*Math.pow(1-r,2)*r*cmd[2] + 3*(1-r)*Math.pow(r,2)*cmd[4] + Math.pow(r,3)*ey;
+                        addPoint(x, y, currentStroke);
+                    }
+                    sx = ex; sy = ey;
+                }
+                else if (cmd[0] === 'Z' || cmd[0] === 'z') {
+                    if (currentStroke.length > 0) currentStroke.push(currentStroke[0]);
+                    if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
+                    currentStroke = [];
+                }
+            });
+            if (currentStroke.length > 1) rawStrokes.push([...currentStroke]);
+        }
+        else if (obj.type === 'polygon' || obj.type === 'polyline') {
+            let pts = [];
+            obj.points.forEach(pt => addPoint(pt.x, pt.y, pts));
+            if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
+            if (pts.length > 1) rawStrokes.push(pts);
+        }
+        else if (obj.type === 'line') {
+            let pts = [];
+            addPoint(obj.x1, obj.y1, pts); addPoint(obj.x2, obj.y2, pts);
+            rawStrokes.push(pts);
+        }
+
+        if (i % 20 === 0) {
             updateProgress(Math.floor((i / objectsToProcess.length) * 40), 'Lecture traits...');
             await new Promise(r => setTimeout(r, 0));
         }
     }
 
-    if (strokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
+    if (rawStrokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
     updateProgress(40, 'Calcul TSP...');
     await new Promise(r => setTimeout(r, 20));
 
-    // 2. TSP : CHEMIN LE PLUS COURT
+    // 2. TSP : CHEMIN LE PLUS COURT (Distance sans racine carrée = vitesse x10)
     let optimized = [];
-    let unvisited = [...strokes];
+    let unvisited = [...rawStrokes];
     optimized.push(unvisited.shift());
     
     let totalStrokes = unvisited.length;
@@ -275,7 +297,7 @@ window.optimizeSVG = async function() {
 
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    // 3. DESSIN SUR LE CANEVAS
+    // 3. DESSIN WYSIWYG
     optimized.forEach((stroke, i) => {
         let d = "M " + stroke[0].x + " " + stroke[0].y;
         for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
@@ -401,30 +423,20 @@ function setupBackgroundControls() {
 function getBBRouting(p1, p2, bbox) {
     let pts = [p1];
     
-    function nearestBBoxPt(p, box) {
-        let dl = Math.abs(p.x - box.left); let dr = Math.abs(p.x - box.right);
-        let dt = Math.abs(p.y - box.top); let db = Math.abs(p.y - box.bottom);
-        let min = Math.min(dl, dr, dt, db);
-        if(min === dl) return {x: box.left, y: p.y, edge: 'left'};
-        if(min === dr) return {x: box.right, y: p.y, edge: 'right'};
-        if(min === dt) return {x: p.x, y: box.top, edge: 'top'};
-        return {x: p.x, y: box.bottom, edge: 'bottom'};
-    }
-
-    let e1 = nearestBBoxPt(p1, bbox); let e2 = nearestBBoxPt(p2, bbox);
-    pts.push({x: e1.x, y: e1.y});
+    // Sortie horizontale (gauche ou droite) puis verticale pour contourner le dessin
+    let safeX1 = (p1.x < (bbox.left + bbox.right)/2) ? bbox.left : bbox.right;
+    let safeY1 = (p1.y < (bbox.top + bbox.bottom)/2) ? bbox.top : bbox.bottom;
     
-    if(e1.edge !== e2.edge) {
-        let edges = ['top', 'right', 'bottom', 'left'];
-        let corners = [{x: bbox.right, y: bbox.top}, {x: bbox.right, y: bbox.bottom}, {x: bbox.left, y: bbox.bottom}, {x: bbox.left, y: bbox.top}];
-        let idx1 = edges.indexOf(e1.edge); let idx2 = edges.indexOf(e2.edge);
-        let diff = idx2 - idx1; if(diff < 0) diff += 4;
-        
-        if(diff === 1) pts.push(corners[idx1]);
-        else if(diff === 3) pts.push(corners[idx2]); 
-        else if(diff === 2) { pts.push(corners[idx1]); pts.push(corners[(idx1+1)%4]); }
-    }
-    pts.push({x: e2.x, y: e2.y}); pts.push(p2);
+    let safeX2 = (p2.x < (bbox.left + bbox.right)/2) ? bbox.left : bbox.right;
+    let safeY2 = (p2.y < (bbox.top + bbox.bottom)/2) ? bbox.top : bbox.bottom;
+
+    pts.push({x: safeX1, y: p1.y});
+    pts.push({x: safeX1, y: safeY1});
+    pts.push({x: safeX2, y: safeY1});
+    pts.push({x: safeX2, y: safeY2});
+    pts.push({x: safeX2, y: p2.y});
+    pts.push(p2);
+    
     return pts.map(p => sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height));
 }
 
@@ -434,12 +446,12 @@ function updateTravelLines() {
     
     if(userStrokes.length < 2) return;
 
+    // Calcul de l'enveloppe du dessin avec une marge de 10px
     let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
     userStrokes.forEach(s => s.sunaeAbsPoints && s.sunaeAbsPoints.forEach(p => {
         minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
         maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
     }));
-    
     let bbox = { left: Math.max(2, minX - 10), top: Math.max(2, minY - 10), right: Math.min(canvas.width - 2, maxX + 10), bottom: Math.min(canvas.height - 2, maxY + 10) };
 
     for (let i = 1; i < userStrokes.length; i++) {
@@ -461,7 +473,7 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ ---
+// --- LE SIMULATEUR ANIMÉ (POINT ROUGE FIXÉ) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
