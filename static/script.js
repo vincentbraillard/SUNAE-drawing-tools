@@ -4,12 +4,36 @@ let currentTable = null;
 let isRound = false;
 let drawMode = 'freedraw'; 
 
-// Variables pour l'outil "Ligne Droite"
 let isDrawingLine = false;
 let tempLine = null;
-
-// Variables pour l'image de fond
 let bgImageObj = null;
+
+// --- FONCTION DE SÉCURITÉ DES BORDURES (Pour le .THR et le visuel) ---
+// Force les coordonnées à rester strictement à l'intérieur de la table
+function sanitizeCoordinates(x, y, round, w, h) {
+    if (round) {
+        const cx = w / 2;
+        const cy = h / 2;
+        const radius = (w / 2) - 1.5; // On retire 1.5px pour garder le stylo bien à l'intérieur
+        const dx = x - cx;
+        const dy = y - cy;
+        const dist = Math.hypot(dx, dy);
+        
+        if (dist > radius) {
+            return {
+                x: cx + (radius * dx / dist),
+                y: cy + (radius * dy / dist)
+            };
+        }
+        return { x, y };
+    } else {
+        const margin = 1.5;
+        return {
+            x: Math.max(margin, Math.min(w - margin, x)),
+            y: Math.max(margin, Math.min(h - margin, y))
+        };
+    }
+}
 
 // --- 1. NAVIGATION DES ÉTAPES ---
 function goToStep(step, moduleName = null) {
@@ -69,8 +93,41 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
+    // QUAND UN TRAIT LIBRE EST TERMINÉ, ON LE SÉCURISE
     canvas.on('path:created', function(e) {
-        e.path.set({ selectable: false, evented: false, isUserStroke: true });
+        let originalPath = e.path;
+        let pathArr = originalPath.path;
+        
+        // On scanne et on corrige chaque point du tracé
+        for (let i = 0; i < pathArr.length; i++) {
+            let cmd = pathArr[i];
+            if (cmd[0] === 'M' || cmd[0] === 'L') {
+                let p = sanitizeCoordinates(cmd[1], cmd[2], isRound, canvas.width, canvas.height);
+                cmd[1] = p.x;
+                cmd[2] = p.y;
+            } else if (cmd[0] === 'Q') {
+                let cp = sanitizeCoordinates(cmd[1], cmd[2], isRound, canvas.width, canvas.height);
+                cmd[1] = cp.x;
+                cmd[2] = cp.y;
+                let p = sanitizeCoordinates(cmd[3], cmd[4], isRound, canvas.width, canvas.height);
+                cmd[3] = p.x;
+                cmd[4] = p.y;
+            }
+        }
+        
+        // On remplace le trait brut par le trait sécurisé
+        canvas.remove(originalPath);
+        let clampedPath = new fabric.Path(pathArr, {
+            fill: null,
+            stroke: '#2980b9',
+            strokeWidth: 3,
+            strokeLineCap: 'round',
+            strokeLineJoin: 'round',
+            selectable: false,
+            evented: false,
+            isUserStroke: true
+        });
+        canvas.add(clampedPath);
         updateTravelLines();
     });
 
@@ -78,7 +135,11 @@ function setupWorkspace(tableName, round, w, h) {
         if (drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
         isDrawingLine = true;
         var pointer = canvas.getPointer(o.e);
-        var points = [pointer.x, pointer.y, pointer.x, pointer.y];
+        
+        // SÉCURITÉ: On corrige le point de départ
+        let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
+        var points = [p.x, p.y, p.x, p.y];
+        
         tempLine = new fabric.Line(points, {
             strokeWidth: 3,
             fill: '#2980b9',
@@ -95,7 +156,10 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.on('mouse:move', function(o) {
         if (!isDrawingLine || drawMode !== 'line') return;
         var pointer = canvas.getPointer(o.e);
-        tempLine.set({ x2: pointer.x, y2: pointer.y });
+        
+        // SÉCURITÉ: On bloque la ligne droite sur la bordure en direct
+        let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
+        tempLine.set({ x2: p.x, y2: p.y });
         canvas.renderAll();
     });
 
@@ -118,6 +182,26 @@ function setupWorkspace(tableName, round, w, h) {
     setupSimulator();
 }
 
+// --- FONCTIONS MATHÉMATIQUES ---
+function getStrokeStart(stroke) {
+    if (stroke.type === 'path') {
+        const pathArr = stroke.origPath || stroke.path;
+        return { x: pathArr[0][1], y: pathArr[0][2] };
+    } else {
+        return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+    }
+}
+
+function getStrokeEnd(stroke) {
+    if (stroke.type === 'path') {
+        const pathArr = stroke.origPath || stroke.path;
+        const cmd = pathArr[pathArr.length - 1];
+        return { x: cmd[cmd.length - 2], y: cmd[cmd.length - 1] };
+    } else {
+        return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+    }
+}
+
 // --- 3. LOGIQUE DES LIGNES ROUGES DE VOYAGE ---
 function updateTravelLines() {
     const objects = canvas.getObjects();
@@ -130,21 +214,8 @@ function updateTravelLines() {
         const prevStroke = userStrokes[i - 1];
         const currStroke = userStrokes[i];
         
-        let prevEnd, currStart;
-
-        if (prevStroke.type === 'path') {
-            const pathInfo = prevStroke.path[prevStroke.path.length - 1];
-            prevEnd = { x: pathInfo[1], y: pathInfo[2] };
-        } else if (prevStroke.type === 'line') {
-            prevEnd = { x: prevStroke.x2, y: prevStroke.y2 };
-        }
-
-        if (currStroke.type === 'path') {
-            const pathInfo = currStroke.path[0];
-            currStart = { x: pathInfo[1], y: pathInfo[2] };
-        } else if (currStroke.type === 'line') {
-            currStart = { x: currStroke.x1, y: currStroke.y1 };
-        }
+        const prevEnd = getStrokeEnd(prevStroke);
+        const currStart = getStrokeStart(currStroke);
 
         if (prevEnd && currStart) {
             const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
@@ -155,7 +226,7 @@ function updateTravelLines() {
                 selectable: false,
                 evented: false,
                 isTravelLine: true,
-                travelIndex: i - 1 // LE CORRECTIF EST ICI : Un numéro d'ordre strict
+                travelIndex: i - 1
             });
             canvas.add(redLine);
             redLine.sendToBack();
@@ -252,7 +323,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (Ordre Parfait) ---
+// --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     
@@ -278,8 +349,6 @@ function setupSimulator() {
         simOverlay.innerHTML = '';
 
         const strokes = canvas.getObjects().filter(o => o.isUserStroke);
-        
-        // LE CORRECTIF EST ICI : On force le tri des lignes rouges par leur numéro d'ordre
         const travels = canvas.getObjects()
             .filter(o => o.isTravelLine)
             .sort((a, b) => a.travelIndex - b.travelIndex);
@@ -301,7 +370,10 @@ function setupSimulator() {
         
         let allSegments = [];
         for (let i = 0; i < strokes.length; i++) {
-            if (i > 0 && travels[i-1]) allSegments.push(travels[i-1]);
+            if (i > 0) {
+                const exactTravel = travels.find(t => t.travelIndex === i - 1);
+                if (exactTravel) allSegments.push(exactTravel);
+            }
             allSegments.push(strokes[i]);
         }
 
@@ -309,15 +381,19 @@ function setupSimulator() {
 
         allSegments.forEach(seg => {
             if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
-            if (seg.type === 'line' && seg.origX2 === undefined) {
+            if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
                 seg.origX1 = seg.x1; seg.origY1 = seg.y1;
                 seg.origX2 = seg.x2; seg.origY2 = seg.y2;
             }
 
             if (seg.type === 'path') {
                 seg.segmentLength = seg.origPath.length;
-            } else if (seg.type === 'line') {
-                const dist = Math.hypot(seg.origX2 - seg.origX1, seg.origY2 - seg.origY1);
+            } else if (seg.type === 'line' || seg.isTravelLine) {
+                const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
+                const sy = seg.origY1 !== undefined ? seg.origY1 : seg.y1;
+                const ex = seg.origX2 !== undefined ? seg.origX2 : seg.x2;
+                const ey = seg.origY2 !== undefined ? seg.origY2 : seg.y2;
+                const dist = Math.hypot(ex - sx, ey - sy);
                 seg.segmentLength = Math.max(1, dist / 4);
             }
             totalLength += seg.segmentLength;
@@ -332,21 +408,15 @@ function setupSimulator() {
 
         allSegments.forEach((seg, index) => {
             if (index === 0) {
-                 if (seg.type === 'path') startDotPos = {x: seg.origPath[0][1], y: seg.origPath[0][2]};
-                 else if (seg.type === 'line') startDotPos = {x: seg.origX1, y: seg.origY1};
+                 startDotPos = getStrokeStart(seg);
             }
 
             if (currentLength + seg.segmentLength <= targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 if (seg.type === 'path') seg.set({ path: seg.origPath });
-                if (seg.type === 'line') seg.set({ x2: seg.origX2, y2: seg.origY2 });
+                if (seg.type === 'line' || seg.isTravelLine) seg.set({ x2: seg.origX2, y2: seg.origY2 });
 
-                if (seg.type === 'path') {
-                    const lastCmd = seg.origPath[seg.origPath.length-1];
-                    currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
-                } else if (seg.type === 'line') {
-                    currentDotPos = {x: seg.origX2, y: seg.origY2};
-                }
+                currentDotPos = getStrokeEnd(seg);
                 currentLength += seg.segmentLength;
             }
             else if (currentLength < targetLength) {
@@ -356,19 +426,26 @@ function setupSimulator() {
 
                 if (seg.type === 'path') {
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
-                    seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
+                    const currentPath = seg.origPath.slice(0, cmdsToShow);
+                    seg.set({ path: currentPath });
 
-                    const lastCmd = seg.origPath[cmdsToShow - 1];
+                    const lastCmd = currentPath[cmdsToShow - 1];
                     if (lastCmd && lastCmd.length >= 3) {
                         currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
                     } else {
                         currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
                     }
-                } else if (seg.type === 'line') {
-                    const newX2 = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
-                    const newY2 = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
-                    seg.set({ x2: newX2, y2: newY2 });
-                    currentDotPos = {x: newX2, y: newY2};
+                } else if (seg.type === 'line' || seg.isTravelLine) {
+                    const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
+                    const sy = seg.origY1 !== undefined ? seg.origY1 : seg.y1;
+                    const ex = seg.origX2 !== undefined ? seg.origX2 : seg.x2;
+                    const ey = seg.origY2 !== undefined ? seg.origY2 : seg.y2;
+
+                    const newX = sx + (ex - sx) * ratio;
+                    const newY = sy + (ey - sy) * ratio;
+
+                    seg.set({ x2: newX, y2: newY });
+                    currentDotPos = {x: newX, y: newY};
                 }
                 currentLength += seg.segmentLength; 
             }
