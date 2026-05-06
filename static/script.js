@@ -16,6 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -28,9 +29,7 @@ function getGridText() {
     for (let r = 0; r < cfg.rows.length; r++) {
         for (let c = 0; c < cfg.rows[r]; c++) {
             let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
-            if (input && input.value && input.value.trim() !== "") {
-                text += input.value.trim();
-            }
+            if (input && input.value && input.value.trim() !== "") text += input.value.trim();
         }
     }
     return text;
@@ -48,7 +47,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// === GESTION DE L'UI ===
+// --- GESTION DE L'INTERFACE ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -130,12 +129,13 @@ function buildTextGrid() {
         }
     }
 }
+
 window.resetTextGrid = function() {
     document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP (ASYNCHRONE ULTRA RAPIDE + CENTRAGE CORRIGÉ) ---
+// --- MODULE SVG & TSP (ASYNCHRONE HAUTE RÉSOLUTION) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -177,85 +177,119 @@ window.optimizeSVG = async function() {
         pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
-    updateProgress(0, 'Analyse géométrique...');
+    updateProgress(0, 'Analyse Haute Définition...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let matrix = currentSvgGroup.calcTransformMatrix();
-    let rawStrokes = [];
+    let strokes = [];
     
     let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    // --- 1. LECTURE DES POINTS BRUTS ET NORMALISATION GEOMETRIQUE (Secret Sandify #2) ---
-    // Nous ne utilisons pas les propriétés Fabric.js visuelles pour le positionnement final.
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
+    // 1. LECTURE HAUTE RÉSOLUTION ET WYSIWYG
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
         let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
         
         if (obj.type === 'path') {
-            let currentStroke = [];
-            obj.path.forEach(cmd => {
-                let px, py;
-                if (cmd[0] === 'M' || cmd[0] === 'L') { px = cmd[1]; py = cmd[2]; }
-                else if (cmd[0] === 'Q') { px = cmd[3]; py = cmd[4]; }
-                else if (cmd[0] === 'C') { px = cmd[5]; py = cmd[6]; }
-                else if (cmd[0] === 'Z' || cmd[0] === 'z') {
-                    if (currentStroke.length > 0) currentStroke.push(currentStroke[0]);
-                    if (currentStroke.length > 1) {
-                        rawStrokes.push([...currentStroke]);
-                        currentStroke.forEach(p => {
-                            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-                            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-                        });
-                    }
-                    currentStroke = []; return;
-                } else return;
-
-                if (px !== undefined && py !== undefined) {
-                    let ptX = px; let ptY = py;
-                    if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+            let pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
+            let len = pathEl.getTotalLength();
+            if(len > 1) {
+                let pts = [];
+                // RESOLUTION MAXIMALE : 1 pixel (Fini l'effet "sous-échantillonné")
+                let step = 1; 
+                for(let l=0; l<=len; l+=step) {
+                    let pt = pathEl.getPointAtLength(l);
+                    let ptX = pt.x; let ptY = pt.y;
+                    if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    // On ne clampe pas encore aux bords de la table, on garde les coordonnées absolues
-                    currentStroke.push(transformed);
+                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
                 }
-            });
-            if (currentStroke.length > 1) {
-                rawStrokes.push([...currentStroke]);
-                currentStroke.forEach(p => {
-                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-                });
+                let pt = pathEl.getPointAtLength(len);
+                let ptX = pt.x; let ptY = pt.y;
+                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                
+                if(pts.length > 1) strokes.push(pts);
             }
         }
-        // ... (lecture identique pour polygon, polyline, line, avec mise à jour min/max x/y)
+        else if (obj.type === 'polygon' || obj.type === 'polyline') {
+            let pts = obj.points.map(pt => {
+                let ptX = pt.x; let ptY = pt.y;
+                if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                return sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
+            });
+            if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
+            if (pts.length > 1) strokes.push(pts);
+        }
+
+        if (i % 10 === 0) {
+            updateProgress(Math.floor((i / objectsToProcess.length) * 40), 'Lecture traits...');
+            await new Promise(r => setTimeout(r, 0));
+        }
     }
 
-    if (rawStrokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
+    if (strokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    // --- 2. REPOSITIONNEMENT ET REDIMENSIONNEMENT (SANDIFY METHOD) ---
-    // On calcule l'échelle pour remplir 90% de la table, et on centre géométriquement.
-    const center_px = canvas.width / 2.0; const center_py = canvas.height / 2.0;
-    const padding = 20; const targetW = canvas.width - padding * 2; const targetH = canvas.height - padding * 2;
-    const srcW = maxX - minX; const srcH = maxY - minY;
+    updateProgress(40, 'Calcul TSP...');
+    await new Promise(r => setTimeout(r, 20));
+
+    // 2. TSP : CHEMIN LE PLUS COURT
+    let optimized = [];
+    let unvisited = [...strokes];
+    optimized.push(unvisited.shift());
     
-    const scale = Math.min(targetW / srcW, targetH / srcH);
-    const offsetX = center_px - (minX + srcW / 2) * scale;
-    const offsetY = center_py - (minY + srcH / 2) * scale;
+    let totalStrokes = unvisited.length;
+    let processedStrokes = 0;
 
-    let strokes = rawStrokes.map(stroke => {
-        return stroke.map(p => {
-            // Transformation géométrique globale pour centrer et redimensionner
-            let pt = { x: p.x * scale + offsetX, y: p.y * scale + offsetY };
-            // Ensuite, on applique sanitizeCoordinates pour le clamping aux bords de la table
-            return sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+    function distSq(p1, p2) { return (p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y); }
+
+    while(unvisited.length > 0) {
+        let currEnd = optimized[optimized.length-1][optimized[optimized.length-1].length-1];
+        let bestIdx = -1, bestDist = Infinity, reverse = false;
+        
+        for(let i=0; i<unvisited.length; i++) {
+            let s = unvisited[i];
+            let dStart = distSq(s[0], currEnd);
+            let dEnd = distSq(s[s.length-1], currEnd);
+            if(dStart < bestDist) { bestDist = dStart; bestIdx = i; reverse = false; }
+            if(dEnd < bestDist) { bestDist = dEnd; bestIdx = i; reverse = true; }
+        }
+        
+        let nextStroke = unvisited.splice(bestIdx, 1)[0];
+        if(reverse) nextStroke.reverse();
+        optimized.push(nextStroke);
+
+        processedStrokes++;
+        if (processedStrokes % 50 === 0) {
+            updateProgress(40 + Math.floor((processedStrokes / totalStrokes) * 50), 'Optimisation...');
+            await new Promise(r => setTimeout(r, 0));
+        }
+    }
+
+    updateProgress(90, 'Génération...');
+    await new Promise(r => setTimeout(r, 20));
+
+    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
+    
+    // 3. DESSIN SUR LE CANEVAS
+    optimized.forEach((stroke, i) => {
+        let d = "M " + stroke[0].x + " " + stroke[0].y;
+        for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
+        let pathObj = new fabric.Path(d, {
+            fill: null, stroke: '#2980b9', strokeWidth: 3, strokeLineCap: 'round', strokeLineJoin: 'round',
+            selectable: false, isUserStroke: true, createdAt: Date.now() + i, sunaeAbsPoints: stroke
         });
+        canvas.add(pathObj);
     });
 
-    // ... (3. TSP : CHEMIN LE PLUS COURT, ALGO IDENTIQUE ULTRA RAPIDE)
+    updateTravelLines();
 
-    // ... (4. DESSIN SUR LE CANEVAS, LIGNES BLEUES ET ROUGES, ALGO IDENTIQUE)
+    updateProgress(100, 'Terminé !');
+    setTimeout(() => { pContainer.style.display = 'none'; btn.disabled = false; btn.style.opacity = '1'; }, 1000);
 };
 
 window.resetSVG = function() {
@@ -363,39 +397,56 @@ function setupBackgroundControls() {
     });
 }
 
-// --- MOTEUR SANDIFY : ROUTAGE PAR LE PÉRIMÈTRE EXTERIEUR (SECRET SANDIFY #3) ---
-function getPerimeterTravel(p1, p2, round, w, h) {
-    let cx = w / 2, cy = h / 2;
-    let th1 = Math.atan2(p1.y - cy, p1.x - cx);
-    let th2 = Math.atan2(p2.y - cy, p2.x - cx);
-    let dTh = th2 - th1;
-    if (dTh > Math.PI) dTh -= 2 * Math.PI;
-    if (dTh < -Math.PI) dTh += 2 * Math.PI;
-    
-    let steps = Math.max(10, Math.floor(Math.abs(dTh) * 20)); 
-    let R_route = round ? (w/2 - 2) : Math.max(w, h); 
+// --- MOTEUR SANDIFY : ROUTAGE PAR LA BOUNDING BOX DU DESSIN ---
+function getBBRouting(p1, p2, bbox) {
     let pts = [p1];
     
-    for(let i=0; i<=steps; i++) {
-        let px = cx + R_route * Math.cos(th1 + dTh * (i / steps));
-        let py = cy + R_route * Math.sin(th1 + dTh * (i / steps));
-        pts.push(sanitizeCoordinates(px, py, round, w, h)); 
+    function nearestBBoxPt(p, box) {
+        let dl = Math.abs(p.x - box.left); let dr = Math.abs(p.x - box.right);
+        let dt = Math.abs(p.y - box.top); let db = Math.abs(p.y - box.bottom);
+        let min = Math.min(dl, dr, dt, db);
+        if(min === dl) return {x: box.left, y: p.y, edge: 'left'};
+        if(min === dr) return {x: box.right, y: p.y, edge: 'right'};
+        if(min === dt) return {x: p.x, y: box.top, edge: 'top'};
+        return {x: p.x, y: box.bottom, edge: 'bottom'};
     }
-    pts.push(p2);
-    return pts;
+
+    let e1 = nearestBBoxPt(p1, bbox); let e2 = nearestBBoxPt(p2, bbox);
+    pts.push({x: e1.x, y: e1.y});
+    
+    if(e1.edge !== e2.edge) {
+        let edges = ['top', 'right', 'bottom', 'left'];
+        let corners = [{x: bbox.right, y: bbox.top}, {x: bbox.right, y: bbox.bottom}, {x: bbox.left, y: bbox.bottom}, {x: bbox.left, y: bbox.top}];
+        let idx1 = edges.indexOf(e1.edge); let idx2 = edges.indexOf(e2.edge);
+        let diff = idx2 - idx1; if(diff < 0) diff += 4;
+        
+        if(diff === 1) pts.push(corners[idx1]);
+        else if(diff === 3) pts.push(corners[idx2]); 
+        else if(diff === 2) { pts.push(corners[idx1]); pts.push(corners[(idx1+1)%4]); }
+    }
+    pts.push({x: e2.x, y: e2.y}); pts.push(p2);
+    return pts.map(p => sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height));
 }
 
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     
+    if(userStrokes.length < 2) return;
+
+    let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
+    userStrokes.forEach(s => s.sunaeAbsPoints && s.sunaeAbsPoints.forEach(p => {
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }));
+    
+    let bbox = { left: Math.max(2, minX - 10), top: Math.max(2, minY - 10), right: Math.min(canvas.width - 2, maxX + 10), bottom: Math.min(canvas.height - 2, maxY + 10) };
+
     for (let i = 1; i < userStrokes.length; i++) {
         let s1 = userStrokes[i - 1].sunaeAbsPoints;
         let s2 = userStrokes[i].sunaeAbsPoints;
-        
         if(s1 && s2 && s1.length > 0 && s2.length > 0) {
-            // C'est ici que l'on remplace la ligne droite rouge par le périmètre (Sandify)
-            let pts = getPerimeterTravel(s1[s1.length-1], s2[0], isRound, canvas.width, canvas.height);
+            let pts = getBBRouting(s1[s1.length-1], s2[0], bbox);
             let d = "M " + pts[0].x + " " + pts[0].y;
             for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
             
@@ -410,4 +461,135 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// ... (setupSimulator, exportTHR IDENTIQUES)
+// --- LE SIMULATEUR ANIMÉ ---
+function setupSimulator() {
+    const slider = document.getElementById('bille-slider');
+    let simOverlay = document.getElementById('sim-overlay');
+    if (!simOverlay) {
+        simOverlay = document.createElement('div');
+        simOverlay.id = 'sim-overlay'; simOverlay.style.position = 'absolute'; simOverlay.style.top = '0'; simOverlay.style.left = '0';
+        simOverlay.style.width = '100%'; simOverlay.style.height = '100%'; simOverlay.style.pointerEvents = 'none';
+        simOverlay.style.borderRadius = isRound ? '50%' : '20px'; simOverlay.style.overflow = 'hidden';
+        document.getElementById('canvas-container').appendChild(simOverlay);
+    }
+    
+    slider.addEventListener('input', function() {
+        if (currentModule === 'Texte Automatique') return; 
+
+        const percent = parseInt(this.value); simOverlay.innerHTML = '';
+        const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
+        const travels = canvas.getObjects().filter(o => o.isTravelLine).sort((a, b) => a.travelIndex - b.travelIndex);
+
+        if (percent === 100) {
+            if (currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
+            canvas.getObjects().forEach(o => {
+                if (o.isUserStroke || o.isTravelLine) {
+                    o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
+                    if (o.type === 'path' && o.origPath) {
+                        o.set({ path: o.origPath, left: o.origLeft, top: o.origTop, pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), width: o.origWidth, height: o.origHeight });
+                    }
+                    if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
+                }
+            });
+            canvas.renderAll(); return;
+        }
+
+        canvas.isDrawingMode = false;
+        
+        let allSegments = [];
+        for (let i = 0; i < strokes.length; i++) {
+            if (i > 0) {
+                const exactTravel = travels.find(t => t.travelIndex === i - 1);
+                if (exactTravel) allSegments.push(exactTravel);
+            }
+            allSegments.push(strokes[i]);
+        }
+
+        let totalLength = 0;
+        allSegments.forEach(seg => {
+            if (seg.type === 'path' && !seg.origPath) {
+                seg.origPath = seg.path; seg.origLeft = seg.left; seg.origTop = seg.top;
+                seg.origPathOffset = { x: seg.pathOffset.x, y: seg.pathOffset.y }; seg.origWidth = seg.width; seg.origHeight = seg.height;
+            }
+            if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
+                seg.origX1 = seg.x1; seg.origY1 = seg.y1; seg.origX2 = seg.x2; seg.origY2 = seg.y2;
+            }
+            seg.segmentLength = seg.sunaeAbsPoints ? seg.sunaeAbsPoints.length : 10;
+            totalLength += seg.segmentLength;
+        });
+
+        if (totalLength === 0) return;
+        const targetLength = (percent / 100) * totalLength;
+        let currentLength = 0; let currentDotPos = null; let startDotPos = allSegments[0] && allSegments[0].sunaeAbsPoints ? allSegments[0].sunaeAbsPoints[0] : null;
+
+        allSegments.forEach((seg) => {
+            if (currentLength + seg.segmentLength <= targetLength) {
+                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
+                if (seg.type === 'path') seg.set({ path: seg.origPath });
+                if (seg.type === 'line' || seg.isTravelLine) seg.set({ x2: seg.origX2, y2: seg.origY2 });
+                if (seg.sunaeAbsPoints) currentDotPos = seg.sunaeAbsPoints[seg.sunaeAbsPoints.length-1];
+                currentLength += seg.segmentLength;
+            }
+            else if (currentLength < targetLength) {
+                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
+                const ratio = (targetLength - currentLength) / seg.segmentLength;
+
+                if (seg.type === 'path') {
+                    const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
+                    seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
+                    seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
+
+                    if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
+                        const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
+                        currentDotPos = seg.sunaeAbsPoints[targetIdx];
+                    }
+                } else if (seg.type === 'line' || seg.isTravelLine) {
+                    const newX = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
+                    const newY = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
+                    seg.set({ x2: newX, y2: newY });
+                    currentDotPos = {x: newX, y: newY};
+                }
+                currentLength += seg.segmentLength; 
+            }
+            else { seg.set({ opacity: 0 }); }
+        });
+
+        let svgDots = '';
+        if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
+        if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
+        simOverlay.innerHTML = svgDots;
+
+        canvas.renderAll();
+    });
+}
+
+// --- EXPORTATION ---
+window.exportTHR = function() {
+    let customName = document.getElementById('export-filename').value.trim();
+    let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
+    
+    let exportData = { table: currentTable, module: currentModule, canvasWidth: canvas ? canvas.width : 600, canvasHeight: canvas ? canvas.height : 600 };
+
+    if (currentModule === 'Texte Automatique') {
+        const cfg = TABLE_CFG[currentTable]; let text_lines = [];
+        for (let r = 0; r < cfg.rows.length; r++) {
+            let rowText = "";
+            for (let c = 0; c < cfg.rows[r]; c++) {
+                let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
+                rowText += input && input.value ? input.value : " ";
+            }
+            text_lines.push(rowText);
+        }
+        exportData.text_lines = text_lines;
+    } else {
+        if (!canvas) return;
+        document.getElementById('bille-slider').value = 100; document.getElementById('bille-slider').dispatchEvent(new Event('input'));
+        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
+    }
+
+    fetch('/export-thr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(exportData) })
+    .then(r => r.blob()).then(blob => {
+        const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = `${finalFileName.replace(/\s+/g, '_')}.thr`;
+        document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(a.href);
+    }).catch(e => alert("Erreur lors de la génération."));
+}
