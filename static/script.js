@@ -16,9 +16,28 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
+// --- HELPERS : NOM DU FICHIER ET COORDONNEES ---
 function getYYMMDD() {
     const d = new Date();
-    return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return yy + mm + dd;
+}
+
+function getGridText() {
+    if (!currentTable || !TABLE_CFG[currentTable]) return "";
+    const cfg = TABLE_CFG[currentTable];
+    let text = "";
+    for (let r = 0; r < cfg.rows.length; r++) {
+        for (let c = 0; c < cfg.rows[r]; c++) {
+            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
+            if (input && input.value && input.value.trim() !== "") {
+                text += input.value.trim();
+            }
+        }
+    }
+    return text;
 }
 
 function sanitizeCoordinates(x, y, round, w, h) {
@@ -33,7 +52,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// === GESTION DE L'UI ===
+// --- GESTION DE L'INTERFACE ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -51,29 +70,35 @@ function goToStep(step, moduleName = null) {
         const gridContainer = document.getElementById('text-grid-container');
         const nameInput = document.getElementById('export-filename');
 
-        // Reset UI
-        simSection.style.display = 'none'; bgSection.style.display = 'none';
-        toolsDessin.style.display = 'none'; toolsTexte.style.display = 'none'; toolsSvg.style.display = 'none';
-        gridContainer.innerHTML = '';
+        if (simSection) simSection.style.display = 'none';
+        if (bgSection) bgSection.style.display = 'none';
+        if (toolsDessin) toolsDessin.style.display = 'none';
+        if (toolsTexte) toolsTexte.style.display = 'none';
+        if (toolsSvg) toolsSvg.style.display = 'none';
+        if (gridContainer) gridContainer.innerHTML = ''; 
         if (canvas) { canvas.isDrawingMode = false; canvas.clear(); }
 
         if (currentModule === 'Texte Automatique') {
-            toolsTexte.style.display = 'block';
+            if (toolsTexte) toolsTexte.style.display = 'block';
             nameInput.value = ""; nameInput.placeholder = "Texte_Sunae";
             setTimeout(buildTextGrid, 50); 
-        } 
-        else if (currentModule === 'Dessin Libre') {
-            simSection.style.display = 'block'; bgSection.style.display = 'block'; toolsDessin.style.display = 'block';
+            
+        } else if (currentModule === 'Dessin Libre') {
+            if (simSection) simSection.style.display = 'block';
+            if (bgSection) bgSection.style.display = 'block';
+            if (toolsDessin) toolsDessin.style.display = 'block';
             nameInput.value = ""; nameInput.placeholder = getYYMMDD() + "_Freedrawing";
-            if (canvas) canvas.isDrawingMode = (drawMode === 'freedraw');
-        }
-        else if (currentModule === 'Fichier SVG') {
-            simSection.style.display = 'block'; toolsSvg.style.display = 'block';
+            if (canvas) { canvas.isDrawingMode = (drawMode === 'freedraw'); updateTravelLines(); }
+            
+        } else if (currentModule === 'Fichier SVG') {
+            if (simSection) simSection.style.display = 'block';
+            if (toolsSvg) toolsSvg.style.display = 'block';
             nameInput.value = ""; nameInput.placeholder = getYYMMDD() + "_ConvertionSVG";
         }
     }
 }
 
+// --- MODULE TEXTE ---
 function buildTextGrid() {
     const grid = document.getElementById('text-grid-container');
     const cfg = TABLE_CFG[currentTable];
@@ -88,17 +113,16 @@ function buildTextGrid() {
         for (let c = 0; c < cfg.rows[r]; c++) {
             let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
             let py = center_py - cfg.y_centers[r] * scale_px;
-            
+
             let input = document.createElement('input');
             input.type = 'text'; input.maxLength = 1; input.className = 'sunae-letter-box';
             input.dataset.row = r; input.dataset.col = c;
             input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
             input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
-            
+
             input.addEventListener('keyup', function(e) {
                 let currentText = getGridText();
                 document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
-                
                 if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
                 this.value = this.value.toUpperCase();
                 if (this.value.length === 1) {
@@ -110,52 +134,39 @@ function buildTextGrid() {
         }
     }
 }
-
-function getGridText() {
-    if (!currentTable || !TABLE_CFG[currentTable]) return "";
-    const cfg = TABLE_CFG[currentTable];
-    let text = "";
-    for (let r = 0; r < cfg.rows.length; r++) {
-        for (let c = 0; c < cfg.rows[r]; c++) {
-            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
-            if (input && input.value && input.value.trim() !== "") text += input.value.trim();
-        }
-    }
-    return text;
-}
-
-window.resetTextGrid = function() { 
-    document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = ''); 
+window.resetTextGrid = function() {
+    document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// === MODULE SVG & TSP (AVEC BARRE DE PROGRESSION ASYNCHRONE) ===
-document.getElementById('svg-upload-file').addEventListener('change', function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(f) {
-        fabric.loadSVGFromString(f.target.result, function(objects, options) {
-            if (currentSvgGroup) canvas.remove(currentSvgGroup);
-            currentSvgGroup = fabric.util.groupSVGElements(objects, options);
-            currentSvgGroup.set({
-                left: canvas.width / 2, top: canvas.height / 2,
-                originX: 'center', originY: 'center',
-                borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
+// --- MODULE SVG & TSP (ASYNCHRONE ULTRA RAPIDE) ---
+const svgUploadInput = document.getElementById('svg-upload-file');
+if (svgUploadInput) {
+    svgUploadInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(f) {
+            fabric.loadSVGFromString(f.target.result, function(objects, options) {
+                if (currentSvgGroup) canvas.remove(currentSvgGroup);
+                currentSvgGroup = fabric.util.groupSVGElements(objects, options);
+                currentSvgGroup.set({
+                    left: canvas.width / 2, top: canvas.height / 2,
+                    originX: 'center', originY: 'center',
+                    borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
+                });
+                let scale = Math.min(canvas.width / currentSvgGroup.width, canvas.height / currentSvgGroup.height) * 0.8;
+                currentSvgGroup.scale(scale);
+                canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
             });
-            let scale = Math.min(canvas.width / currentSvgGroup.width, canvas.height / currentSvgGroup.height) * 0.8;
-            currentSvgGroup.scale(scale);
-            canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
-        });
-    };
-    reader.readAsText(file);
-});
+        };
+        reader.readAsText(file);
+    });
+}
 
-// Transformation en fonction ASYNCHRONE pour mettre à jour l'UI !
 window.optimizeSVG = async function() {
     if(!currentSvgGroup) return;
 
-    // 1. Initialisation de la barre de progression
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
     const pBar = document.getElementById('svg-progress-bar');
@@ -164,36 +175,60 @@ window.optimizeSVG = async function() {
     btn.disabled = true;
     btn.style.opacity = '0.5';
     pContainer.style.display = 'block';
-    pBar.style.width = '0%';
-    pText.innerText = '0%';
+    
+    function updateProgress(pct, textMsg) {
+        pBar.style.width = pct + '%';
+        pText.innerText = textMsg + ' (' + pct + '%)';
+    }
 
-    // Pause de 50ms pour forcer le navigateur à afficher la barre avant de lancer les maths
-    await new Promise(resolve => setTimeout(resolve, 50));
+    updateProgress(0, 'Analyse du dessin...');
+    // Laisse le temps au navigateur d'afficher la barre avant de bloquer le processeur
+    await new Promise(r => setTimeout(r, 50)); 
     
     let matrix = currentSvgGroup.calcTransformMatrix();
     let strokes = [];
-    
-    // 2. Extraction et Discrétisation
     let svgNS = "http://www.w3.org/2000/svg";
-    let pathEl = document.createElementNS(svgNS, "path");
-
+    
+    let paths = [];
     currentSvgGroup.getObjects().forEach(obj => {
-        if(obj.type === 'path') {
-            let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
-            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
-            let len = pathEl.getTotalLength();
-            if(len < 1) return;
+        if(obj.type === 'path') paths.push(obj);
+    });
+
+    let totalPaths = paths.length;
+    
+    // --- 1. LECTURE DES LIGNES ---
+    for(let i=0; i<totalPaths; i++) {
+        let obj = paths[i];
+        let pathEl = document.createElementNS(svgNS, "path");
+        let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
+        pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
+        
+        let len = pathEl.getTotalLength();
+        if(len > 1) {
             let pts = [];
-            for(let i=0; i<=Math.floor(len/3); i++) {
-                let pt = pathEl.getPointAtLength((i/Math.floor(len/3)) * len);
+            // SANDIFY TRICK : On ne prend qu'un point tous les 8 pixels pour soulager le CPU
+            let step = 8; 
+            for(let l=0; l<=len; l+=step) {
+                let pt = pathEl.getPointAtLength(l);
                 let transformed = fabric.util.transformPoint({x: pt.x - obj.pathOffset.x, y: pt.y - obj.pathOffset.y}, objMat);
                 pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
             }
+            // Point de fin obligatoire
+            let pt = pathEl.getPointAtLength(len);
+            let transformed = fabric.util.transformPoint({x: pt.x - obj.pathOffset.x, y: pt.y - obj.pathOffset.y}, objMat);
+            pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+            
             if(pts.length > 1) strokes.push(pts);
         }
-    });
 
-    // 3. Algo TSP ASYNCHRONE (Plus proche voisin)
+        // Met à jour la barre de progression sans figer l'écran
+        if (i % 10 === 0) {
+            updateProgress(Math.floor((i / totalPaths) * 40), 'Lecture traits...');
+            await new Promise(r => setTimeout(r, 0));
+        }
+    }
+
+    // --- 2. TSP : CHEMIN LE PLUS COURT ---
     let optimized = [];
     if(strokes.length > 0) {
         let unvisited = [...strokes];
@@ -202,13 +237,20 @@ window.optimizeSVG = async function() {
         let totalStrokes = unvisited.length;
         let processedStrokes = 0;
 
+        // Fonction mathématique très rapide (sans racine carrée)
+        function distSq(p1, p2) {
+            return (p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y);
+        }
+
         while(unvisited.length > 0) {
             let currEnd = optimized[optimized.length-1][optimized[optimized.length-1].length-1];
             let bestIdx = -1, bestDist = Infinity, reverse = false;
             
             for(let i=0; i<unvisited.length; i++) {
-                let dStart = Math.hypot(unvisited[i][0].x - currEnd.x, unvisited[i][0].y - currEnd.y);
-                let dEnd = Math.hypot(unvisited[i][unvisited[i].length-1].x - currEnd.x, unvisited[i][unvisited[i].length-1].y - currEnd.y);
+                let s = unvisited[i];
+                let dStart = distSq(s[0], currEnd);
+                let dEnd = distSq(s[s.length-1], currEnd);
+                
                 if(dStart < bestDist) { bestDist = dStart; bestIdx = i; reverse = false; }
                 if(dEnd < bestDist) { bestDist = dEnd; bestIdx = i; reverse = true; }
             }
@@ -219,21 +261,20 @@ window.optimizeSVG = async function() {
 
             processedStrokes++;
 
-            // Mise à jour de l'UI tous les 5 traits ou à la fin
-            if (processedStrokes % 5 === 0 || unvisited.length === 0) {
-                let pct = Math.round((processedStrokes / totalStrokes) * 100);
-                pBar.style.width = pct + '%';
-                pText.innerText = pct + '%';
-                
-                // Cette ligne dit au navigateur : "Fais une pause de 0ms et rafraichis l'écran"
-                await new Promise(resolve => setTimeout(resolve, 0));
+            // Respiration du navigateur pour afficher la barre
+            if (processedStrokes % 50 === 0) {
+                updateProgress(40 + Math.floor((processedStrokes / totalStrokes) * 50), 'Calcul TSP...');
+                await new Promise(r => setTimeout(r, 0));
             }
         }
     }
 
+    updateProgress(95, 'Génération visuelle...');
+    await new Promise(r => setTimeout(r, 10));
+
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    // 4. Génération Visuelle
+    // --- 3. DESSIN SUR LE CANEVAS ---
     optimized.forEach((stroke, i) => {
         let d = "M " + stroke[0].x + " " + stroke[0].y;
         for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
@@ -246,10 +287,12 @@ window.optimizeSVG = async function() {
 
     updateTravelLines();
 
-    // 5. Restauration de l'UI
-    btn.disabled = false;
-    btn.style.opacity = '1';
-    setTimeout(() => { pContainer.style.display = 'none'; }, 1000); // Disparaît après 1s
+    updateProgress(100, 'Terminé !');
+    setTimeout(() => {
+        pContainer.style.display = 'none';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    }, 1000);
 };
 
 window.resetSVG = function() {
@@ -258,55 +301,12 @@ window.resetSVG = function() {
     resetCanvas();
 }
 
-// === ROUTAGE PÉRIMÈTRE SANDIFY ===
-function getPerimeterTravel(p1, p2, round, w, h) {
-    let cx = w / 2, cy = h / 2;
-    let th1 = Math.atan2(p1.y - cy, p1.x - cx);
-    let th2 = Math.atan2(p2.y - cy, p2.x - cx);
-    let dTh = th2 - th1;
-    if (dTh > Math.PI) dTh -= 2 * Math.PI;
-    if (dTh < -Math.PI) dTh += 2 * Math.PI;
-    let steps = Math.max(10, Math.floor(Math.abs(dTh) * 20)); 
-    let R_route = round ? (w/2 - 2) : Math.max(w, h);
-    let pts = [p1];
-    for(let i=0; i<=steps; i++) {
-        let px = cx + R_route * Math.cos(th1 + dTh * (i / steps));
-        let py = cy + R_route * Math.sin(th1 + dTh * (i / steps));
-        pts.push(sanitizeCoordinates(px, py, round, w, h)); 
-    }
-    pts.push(p2);
-    return pts;
-}
-
-function updateTravelLines() {
-    canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
-    const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    
-    for (let i = 1; i < userStrokes.length; i++) {
-        let s1 = userStrokes[i - 1].sunaeAbsPoints;
-        let s2 = userStrokes[i].sunaeAbsPoints;
-        if(s1 && s2) {
-            let pts = getPerimeterTravel(s1[s1.length-1], s2[0], isRound, canvas.width, canvas.height);
-            let d = "M " + pts[0].x + " " + pts[0].y;
-            for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
-            
-            const redLine = new fabric.Path(d, {
-                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], fill: '', opacity: 0.7,
-                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1, sunaeAbsPoints: pts
-            });
-            canvas.add(redLine); redLine.sendToBack();
-        }
-    }
-    if (bgImageObj) bgImageObj.sendToBack();
-    canvas.renderAll();
-}
-
-// === CANVAS SETUP ===
+// --- INITIALISATION DU CANEVAS ---
 function setupWorkspace(tableName, round, w, h) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
-    if (canvas) canvas.dispose();
 
+    if (canvas) canvas.dispose();
     const container = document.getElementById('canvas-container');
     container.style.width = w + 'px'; container.style.height = h + 'px';
     container.style.borderRadius = isRound ? '50%' : '20px';
@@ -314,22 +314,31 @@ function setupWorkspace(tableName, round, w, h) {
     canvas = new fabric.Canvas('sunae-canvas', {
         width: w, height: h, isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), selection: false
     });
+
     if (isRound) canvas.clipPath = new fabric.Circle({ radius: w / 2, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
     else canvas.clipPath = new fabric.Rect({ width: w, height: h, rx: 20, ry: 20, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+
     canvas.freeDrawingBrush.color = '#2980b9'; canvas.freeDrawingBrush.width = 3;
 
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
+        let pathObj = e.path;
+        let offsetX = pathObj.left - pathObj.pathOffset.x;
+        let offsetY = pathObj.top - pathObj.pathOffset.y;
         let absPoints = []; 
-        let offsetX = e.path.left - e.path.pathOffset.x;
-        let offsetY = e.path.top - e.path.pathOffset.y;
-        
-        for (let i = 0; i < e.path.path.length; i++) {
-            let cmd = e.path.path[i];
-            if (cmd[0] === 'M' || cmd[0] === 'L') absPoints.push(sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height));
-            else if (cmd[0] === 'Q') absPoints.push(sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height)); 
+
+        for (let i = 0; i < pathObj.path.length; i++) {
+            let cmd = pathObj.path[i];
+            if (cmd[0] === 'M' || cmd[0] === 'L') {
+                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
+                absPoints.push({x: p.x, y: p.y});
+            } else if (cmd[0] === 'Q') {
+                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
+                absPoints.push({x: p.x, y: p.y}); 
+            }
         }
-        e.path.set({ selectable: false, isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: absPoints });
+
+        pathObj.set({ selectable: false, isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: absPoints });
         updateTravelLines();
     });
 
@@ -339,14 +348,16 @@ function setupWorkspace(tableName, round, w, h) {
         tempLine = new fabric.Line([p.x, p.y, p.x, p.y], { strokeWidth: 3, fill: '#2980b9', stroke: '#2980b9', originX: 'center', originY: 'center', selectable: false, evented: false, isUserStroke: true, createdAt: Date.now() });
         canvas.add(tempLine);
     });
+
     canvas.on('mouse:move', function(o) {
         if (!isDrawingLine) return;
         let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, canvas.width, canvas.height);
         tempLine.set({ x2: p.x, y2: p.y }); canvas.renderAll();
     });
+
     canvas.on('mouse:up', function() {
         if (!isDrawingLine) return;
-        isDrawingLine = false;
+        isDrawingLine = false; 
         if (tempLine) {
             tempLine.sunaeAbsPoints = [{x: tempLine.x1, y: tempLine.y1}, {x: tempLine.x2, y: tempLine.y2}];
             updateTravelLines();
@@ -388,6 +399,54 @@ function setupBackgroundControls() {
     });
 }
 
+// --- MOTEUR SANDIFY : ROUTAGE PAR L'EXTERIEUR ---
+function getPerimeterTravel(p1, p2, round, w, h) {
+    let cx = w / 2, cy = h / 2;
+    let th1 = Math.atan2(p1.y - cy, p1.x - cx);
+    let th2 = Math.atan2(p2.y - cy, p2.x - cx);
+    let dTh = th2 - th1;
+    if (dTh > Math.PI) dTh -= 2 * Math.PI;
+    if (dTh < -Math.PI) dTh += 2 * Math.PI;
+    
+    let steps = Math.max(10, Math.floor(Math.abs(dTh) * 20)); 
+    let R_route = round ? (w/2 - 2) : Math.max(w, h); 
+    let pts = [p1];
+    
+    for(let i=0; i<=steps; i++) {
+        let px = cx + R_route * Math.cos(th1 + dTh * (i / steps));
+        let py = cy + R_route * Math.sin(th1 + dTh * (i / steps));
+        pts.push(sanitizeCoordinates(px, py, round, w, h)); 
+    }
+    pts.push(p2);
+    return pts;
+}
+
+function updateTravelLines() {
+    canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
+    const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
+    
+    for (let i = 1; i < userStrokes.length; i++) {
+        let s1 = userStrokes[i - 1].sunaeAbsPoints;
+        let s2 = userStrokes[i].sunaeAbsPoints;
+        
+        if(s1 && s2 && s1.length > 0 && s2.length > 0) {
+            // C'est ici que l'on remplace la ligne droite rouge par le périmètre (Sandify)
+            let pts = getPerimeterTravel(s1[s1.length-1], s2[0], isRound, canvas.width, canvas.height);
+            let d = "M " + pts[0].x + " " + pts[0].y;
+            for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
+            
+            const redLine = new fabric.Path(d, {
+                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], fill: '', opacity: 0.7,
+                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1, sunaeAbsPoints: pts
+            });
+            canvas.add(redLine); redLine.sendToBack();
+        }
+    }
+    if (bgImageObj) bgImageObj.sendToBack();
+    canvas.renderAll();
+}
+
+// --- LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -401,62 +460,101 @@ function setupSimulator() {
     
     slider.addEventListener('input', function() {
         if (currentModule === 'Texte Automatique') return; 
+
         const percent = parseInt(this.value); simOverlay.innerHTML = '';
-        const segments = canvas.getObjects().filter(o => o.isUserStroke || o.isTravelLine).sort((a, b) => (a.createdAt || a.travelIndex) - (b.createdAt || b.travelIndex));
+        const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
+        const travels = canvas.getObjects().filter(o => o.isTravelLine).sort((a, b) => a.travelIndex - b.travelIndex);
 
         if (percent === 100) {
-            if(currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
-            segments.forEach(seg => {
-                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
-                if (seg.type === 'path' && seg.origPath) seg.set({ path: seg.origPath });
+            if (currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
+            canvas.getObjects().forEach(o => {
+                if (o.isUserStroke || o.isTravelLine) {
+                    o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
+                    if (o.type === 'path' && o.origPath) {
+                        o.set({ path: o.origPath, left: o.origLeft, top: o.origTop, pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), width: o.origWidth, height: o.origHeight });
+                    }
+                    if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
+                }
             });
             canvas.renderAll(); return;
         }
+
         canvas.isDrawingMode = false;
         
+        let allSegments = [];
+        for (let i = 0; i < strokes.length; i++) {
+            if (i > 0) {
+                const exactTravel = travels.find(t => t.travelIndex === i - 1);
+                if (exactTravel) allSegments.push(exactTravel);
+            }
+            allSegments.push(strokes[i]);
+        }
+
         let totalLength = 0;
-        segments.forEach(seg => {
-            if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
+        allSegments.forEach(seg => {
+            if (seg.type === 'path' && !seg.origPath) {
+                seg.origPath = seg.path; seg.origLeft = seg.left; seg.origTop = seg.top;
+                seg.origPathOffset = { x: seg.pathOffset.x, y: seg.pathOffset.y }; seg.origWidth = seg.width; seg.origHeight = seg.height;
+            }
+            if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
+                seg.origX1 = seg.x1; seg.origY1 = seg.y1; seg.origX2 = seg.x2; seg.origY2 = seg.y2;
+            }
             seg.segmentLength = seg.sunaeAbsPoints ? seg.sunaeAbsPoints.length : 10;
             totalLength += seg.segmentLength;
         });
 
         if (totalLength === 0) return;
         const targetLength = (percent / 100) * totalLength;
-        let currentLength = 0; let currentDotPos = null; let startDotPos = segments[0] && segments[0].sunaeAbsPoints ? segments[0].sunaeAbsPoints[0] : null;
+        let currentLength = 0; let currentDotPos = null; let startDotPos = allSegments[0] && allSegments[0].sunaeAbsPoints ? allSegments[0].sunaeAbsPoints[0] : null;
 
-        segments.forEach((seg) => {
+        allSegments.forEach((seg) => {
             if (currentLength + seg.segmentLength <= targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 if (seg.type === 'path') seg.set({ path: seg.origPath });
+                if (seg.type === 'line' || seg.isTravelLine) seg.set({ x2: seg.origX2, y2: seg.origY2 });
                 if (seg.sunaeAbsPoints) currentDotPos = seg.sunaeAbsPoints[seg.sunaeAbsPoints.length-1];
                 currentLength += seg.segmentLength;
-            } else if (currentLength < targetLength) {
+            }
+            else if (currentLength < targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 const ratio = (targetLength - currentLength) / seg.segmentLength;
 
-                if (seg.type === 'path' && seg.sunaeAbsPoints) {
-                    const limit = Math.max(1, Math.floor(seg.origPath.length * ratio));
-                    seg.set({ path: seg.origPath.slice(0, limit) });
-                    const targetIdx = Math.min(Math.floor(seg.sunaeAbsPoints.length * ratio), seg.sunaeAbsPoints.length - 1);
-                    currentDotPos = seg.sunaeAbsPoints[targetIdx];
+                if (seg.type === 'path') {
+                    const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
+                    seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
+                    seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
+
+                    if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
+                        const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
+                        currentDotPos = seg.sunaeAbsPoints[targetIdx];
+                    }
+                } else if (seg.type === 'line' || seg.isTravelLine) {
+                    const newX = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
+                    const newY = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
+                    seg.set({ x2: newX, y2: newY });
+                    currentDotPos = {x: newX, y: newY};
                 }
                 currentLength += seg.segmentLength; 
-            } else seg.set({ opacity: 0 });
+            }
+            else { seg.set({ opacity: 0 }); }
         });
 
         let svgDots = '';
-        if (startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
+        if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
-        simOverlay.innerHTML = svgDots; canvas.renderAll();
+        simOverlay.innerHTML = svgDots;
+
+        canvas.renderAll();
     });
 }
 
+// --- EXPORTATION ---
 window.exportTHR = function() {
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
     
-    let exportData = { table: currentTable, module: currentModule };
+    let exportData = { table: currentTable, module: currentModule, canvasWidth: canvas ? canvas.width : 600, canvasHeight: canvas ? canvas.height : 600 };
+
     if (currentModule === 'Texte Automatique') {
         const cfg = TABLE_CFG[currentTable]; let text_lines = [];
         for (let r = 0; r < cfg.rows.length; r++) {
