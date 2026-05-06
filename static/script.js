@@ -9,15 +9,17 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES ---
+// --- CONFIGURATIONS DES MACHINES (Importées du Python) ---
+const TABLE_CFG = {
+    "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
+    "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
+    "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
+};
+
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
-        const cx = w / 2;
-        const cy = h / 2;
-        const radius = (w / 2) - 2; 
-        const dx = x - cx;
-        const dy = y - cy;
-        const dist = Math.hypot(dx, dy);
+        const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
+        const dx = x - cx; const dy = y - cy; const dist = Math.hypot(dx, dy);
         if (dist > radius) return { x: cx + (radius * dx / dist), y: cy + (radius * dy / dist) };
         return { x, y };
     } else {
@@ -26,7 +28,6 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// --- 1. NAVIGATION DES ÉTAPES ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -39,28 +40,92 @@ function goToStep(step, moduleName = null) {
         if (currentModule === 'Texte Automatique') {
             document.getElementById('tools-dessin').style.display = 'none';
             document.getElementById('tools-texte').style.display = 'block';
-            if (canvas) {
-                canvas.isDrawingMode = false;
-                canvas.selection = true;
-            }
+            if (canvas) canvas.isDrawingMode = false;
+            buildTextGrid(); // ON GÉNÈRE TA GRILLE
         } else {
             document.getElementById('tools-dessin').style.display = 'block';
             document.getElementById('tools-texte').style.display = 'none';
-            if (canvas) {
-                canvas.isDrawingMode = (drawMode === 'freedraw');
-                canvas.selection = false;
-            }
+            document.getElementById('text-grid-container').innerHTML = ''; // On cache la grille
+            if (canvas) canvas.isDrawingMode = (drawMode === 'freedraw');
         }
     }
 }
 
-// --- 2. INITIALISATION DE L'ESPACE DE TRAVAIL ---
+// --- GÉNÉRATION DE LA GRILLE WYSIWYG ---
+function buildTextGrid() {
+    const grid = document.getElementById('text-grid-container');
+    grid.innerHTML = '';
+    const cfg = TABLE_CFG[currentTable];
+    if (!cfg) return;
+
+    const center_px = canvas.width / 2.0;
+    const center_py = canvas.height / 2.0;
+    
+    // Calcul de l'échelle exact comme dans ton Tkinter
+    let scale_px = 0;
+    if (cfg.round) {
+        scale_px = (canvas.width) / 2.0;
+    } else {
+        const ymax = 1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1);
+        const xmax = cfg.aspect * ymax;
+        scale_px = (canvas.width / 2.0) / xmax;
+    }
+
+    const entry_w = cfg.w * scale_px;
+    const entry_h = cfg.h * scale_px;
+
+    for (let r = 0; r < cfg.rows.length; r++) {
+        let length = cfg.rows[r];
+        let y_center = cfg.y_centers[r];
+        let total_width = (length * (cfg.w + cfg.spacing)) - cfg.spacing;
+        let start_x = -(total_width / 2.0);
+
+        for (let c = 0; c < length; c++) {
+            let char_x = start_x + (c * (cfg.w + cfg.spacing));
+            let center_cx = char_x + (cfg.w / 2.0);
+            
+            let px = center_px + center_cx * scale_px;
+            let py = center_py - y_center * scale_px;
+
+            let input = document.createElement('input');
+            input.type = 'text';
+            input.maxLength = 1;
+            input.className = 'sunae-letter-box';
+            input.dataset.row = r;
+            input.dataset.col = c;
+            
+            input.style.width = entry_w + 'px';
+            input.style.height = entry_h + 'px';
+            input.style.left = (px - entry_w / 2) + 'px';
+            input.style.top = (py - entry_h / 2) + 'px';
+
+            // Comportement de la frappe (Avancement auto comme ton Tkinter)
+            input.addEventListener('keyup', function(e) {
+                if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+                this.value = this.value.toUpperCase();
+                
+                if (this.value.length === 1) {
+                    let next = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c+1}"]`);
+                    if (!next) next = document.querySelector(`.sunae-letter-box[data-row="${r+1}"][data-col="0"]`);
+                    if (next) next.focus();
+                }
+            });
+
+            grid.appendChild(input);
+        }
+    }
+}
+
+// Fonction de nettoyage de la grille
+window.resetTextGrid = function() {
+    document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
+}
+
 function setupWorkspace(tableName, round, w, h) {
     currentTable = tableName;
     isRound = round;
     
     goToStep(3, currentModule || 'Dessin Libre');
-
     if (canvas) canvas.dispose();
 
     const container = document.getElementById('canvas-container');
@@ -70,55 +135,16 @@ function setupWorkspace(tableName, round, w, h) {
     container.style.overflow = 'hidden';
 
     canvas = new fabric.Canvas('sunae-canvas', {
-        width: w,
-        height: h,
+        width: w, height: h,
         isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'),
-        selection: (currentModule === 'Texte Automatique')
+        selection: false
     });
 
-    if (isRound) {
-        canvas.clipPath = new fabric.Circle({ radius: w / 2, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
-    } else {
-        canvas.clipPath = new fabric.Rect({ width: w, height: h, rx: 20, ry: 20, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
-    }
+    if (isRound) canvas.clipPath = new fabric.Circle({ radius: w / 2, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+    else canvas.clipPath = new fabric.Rect({ width: w, height: h, rx: 20, ry: 20, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
 
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
-
-    // --- GESTION DU TEXTE ---
-    window.addText = function() {
-        const textVal = document.getElementById('text-input').value;
-        if (!textVal) return;
-
-        const textObj = new fabric.IText(textVal, {
-            left: canvas.width / 2,
-            top: canvas.height / 2,
-            fontFamily: 'Courier', 
-            fill: '#2980b9', 
-            originX: 'center',
-            originY: 'center',
-            selectable: true,
-            isUserStroke: false, 
-            isSunaeText: true, // Marqueur pour le backend Python
-            createdAt: Date.now() 
-        });
-
-        canvas.add(textObj);
-        canvas.setActiveObject(textObj);
-        canvas.renderAll();
-    };
-
-    window.deleteSelected = function() {
-        const activeObj = canvas.getActiveObject();
-        if (activeObj) {
-            canvas.remove(activeObj);
-            updateTravelLines();
-        }
-    };
-
-    canvas.on('object:modified', function() {
-        updateTravelLines();
-    });
 
     // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
@@ -192,33 +218,25 @@ function setupWorkspace(tableName, round, w, h) {
 
     setupBackgroundControls();
     setupSimulator();
+    if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
-    else if (stroke.type === 'line') return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
-    else return stroke.getCenterPoint();
+    else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
 }
 
 function getStrokeEnd(stroke) {
     if (stroke.type === 'path') return { x: stroke.absEndX, y: stroke.absEndY };
-    else if (stroke.type === 'line') return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
-    else return stroke.getCenterPoint();
+    else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
-
-    const userStrokes = canvas.getObjects()
-        .filter(o => o.isUserStroke)
-        .sort((a, b) => a.createdAt - b.createdAt);
-    
+    const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     for (let i = 1; i < userStrokes.length; i++) {
         const prevEnd = getStrokeEnd(userStrokes[i - 1]);
         const currStart = getStrokeStart(userStrokes[i]);
-
         if (prevEnd && currStart) {
             const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
                 stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
@@ -232,13 +250,9 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- 4. ACTIONS: UNDO ET RESET ---
 window.undoStroke = function() {
     const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    if (strokes.length > 0) {
-        canvas.remove(strokes[strokes.length - 1]);
-        updateTravelLines();
-    }
+    if (strokes.length > 0) { canvas.remove(strokes[strokes.length - 1]); updateTravelLines(); }
 }
 
 window.resetCanvas = function() {
@@ -246,7 +260,6 @@ window.resetCanvas = function() {
     canvas.renderAll();
 }
 
-// --- 5. GESTION DE L'IMAGE DE FOND ---
 function setupBackgroundControls() {
     const uploadInput = document.getElementById('bg-upload');
     const scaleSlider = document.getElementById('bg-scale');
@@ -292,7 +305,6 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -308,14 +320,13 @@ function setupSimulator() {
     slider.addEventListener('input', function() {
         const percent = parseInt(this.value);
         simOverlay.innerHTML = '';
-
         const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
         const travels = canvas.getObjects().filter(o => o.isTravelLine).sort((a, b) => a.travelIndex - b.travelIndex);
 
         if (percent === 100) {
             if(currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
             canvas.getObjects().forEach(o => {
-                if (o.isUserStroke || o.isTravelLine || o.isSunaeText) {
+                if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
                     if (o.type === 'path' && o.origPath) o.set({ path: o.origPath });
                     if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
@@ -352,13 +363,10 @@ function setupSimulator() {
 
         if (totalLength === 0) return;
         const targetLength = (percent / 100) * totalLength;
-        let currentLength = 0;
-        let currentDotPos = null;
-        let startDotPos = null;
+        let currentLength = 0; let currentDotPos = null; let startDotPos = null;
 
         allSegments.forEach((seg, index) => {
             if (index === 0) startDotPos = getStrokeStart(seg);
-
             if (currentLength + seg.segmentLength <= targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 if (seg.type === 'path') seg.set({ path: seg.origPath });
@@ -367,23 +375,17 @@ function setupSimulator() {
                 currentLength += seg.segmentLength;
             }
             else if (currentLength < targetLength) {
-                const remainingLength = targetLength - currentLength;
-                const ratio = remainingLength / seg.segmentLength;
-
+                const ratio = (targetLength - currentLength) / seg.segmentLength;
                 if (seg.type === 'path') {
                     seg.set({ opacity: 1 });
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
-
                     const lastCmd = currentPath[cmdsToShow - 1];
                     if (lastCmd && lastCmd.length >= 3) currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
                     else currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
-                    
-                    const offsetX = seg.left - seg.pathOffset.x;
-                    const offsetY = seg.top - seg.pathOffset.y;
+                    const offsetX = seg.left - seg.pathOffset.x; const offsetY = seg.top - seg.pathOffset.y;
                     currentDotPos = { x: currentDotPos.x + offsetX, y: currentDotPos.y + offsetY };
-                    
                 } else if (seg.type === 'line' || seg.isTravelLine) {
                     seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                     const newX = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
@@ -393,33 +395,41 @@ function setupSimulator() {
                 }
                 currentLength += seg.segmentLength; 
             }
-            else {
-                seg.set({ opacity: 0 });
-            }
+            else { seg.set({ opacity: 0 }); }
         });
 
         let svgDots = '';
         if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         simOverlay.innerHTML = svgDots;
-
         canvas.renderAll();
     });
 }
 
-// --- 7. EXPORTATION VERS FLASK (Avec téléchargement du fichier) ---
 window.exportTHR = function() {
-    if (!canvas) return;
-
-    // On s'assure d'avoir tout le tracé
-    document.getElementById('bille-slider').value = 100;
-    document.getElementById('bille-slider').dispatchEvent(new Event('input'));
-
-    const exportData = {
+    let exportData = {
         table: currentTable,
-        module: currentModule,
-        drawing: canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'isSunaeText'])
+        module: currentModule
     };
+
+    if (currentModule === 'Texte Automatique') {
+        const cfg = TABLE_CFG[currentTable];
+        let text_lines = [];
+        for (let r = 0; r < cfg.rows.length; r++) {
+            let rowText = "";
+            for (let c = 0; c < cfg.rows[r]; c++) {
+                let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
+                rowText += input && input.value ? input.value : " ";
+            }
+            text_lines.push(rowText);
+        }
+        exportData.text_lines = text_lines;
+    } else {
+        if (!canvas) return;
+        document.getElementById('bille-slider').value = 100;
+        document.getElementById('bille-slider').dispatchEvent(new Event('input'));
+        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt']);
+    }
 
     fetch('/export-thr', {
         method: 'POST',
@@ -428,15 +438,13 @@ window.exportTHR = function() {
     })
     .then(response => {
         if (!response.ok) throw new Error("Erreur serveur");
-        return response.blob(); // On récupère un FICHIER, pas du texte !
+        return response.blob();
     })
     .then(blob => {
-        // Création magique du téléchargement dans le navigateur
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
-        // Nom du fichier généré
         let safeModuleName = currentModule ? currentModule.replace(/\s+/g, '_') : 'Dessin';
         a.download = `Sunae_${safeModuleName}.thr`;
         document.body.appendChild(a);
