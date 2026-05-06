@@ -1,4 +1,3 @@
-/* --- Variables globales pour les couleurs --- */
 :root {
     --bg-main: #0e1117;       
     --bg-card: #171d2b;       
@@ -11,7 +10,6 @@
     --line-red: #d32f2f;
 }
 
-/* --- Base --- */
 body {
     background-color: var(--bg-main);
     color: var(--text-main);
@@ -26,20 +24,17 @@ hr {
     margin: 20px 0;
 }
 
-/* --- En-tête --- */
 .logo-container {
     display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
 }
 .logo-container img { max-width: 200px; height: auto; }
 
-/* --- Sections d'étapes --- */
 .step-section {
     display: none; max-width: 1200px; margin: 0 auto;
 }
 .step-section.active { display: block; }
 .section-title { text-align: center; margin-bottom: 30px; font-weight: 600; }
 
-/* --- Grille de cartes --- */
 .card-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; justify-content: center;
 }
@@ -54,7 +49,6 @@ hr {
 .card h3 { margin-top: 0; margin-bottom: 10px; }
 .card p { color: var(--text-muted); font-size: 0.9em; margin-bottom: 20px; }
 
-/* --- Boutons --- */
 button {
     background-color: transparent; border: 1px solid var(--accent-gold); color: var(--text-main);
     border-radius: 6px; padding: 8px 20px; cursor: pointer; transition: all 0.3s ease; font-size: 1rem;
@@ -69,7 +63,6 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 .upload-btn:hover { background-color: #333; }
 
-/* --- Espace de travail --- */
 .workspace-header { display: flex; align-items: center; }
 .workspace-title { margin: 0 auto; font-size: 1.5rem; }
 .workspace-grid { display: grid; grid-template-columns: 1fr 3fr; gap: 30px; margin-top: 20px; }
@@ -82,14 +75,12 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .slider-group label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: var(--text-muted); }
 .slider-group input[type="range"] { width: 100%; }
 
-/* --- Le Canevas --- */
 .canvas-panel { display: flex; justify-content: center; align-items: flex-start; }
 #canvas-container {
     background-color: var(--sand-color); border: 4px dashed #bdc3c7; position: relative; overflow: hidden;
 }
 .canvas-container { margin: 0 auto; }
 
-/* --- Le Slider Chrome --- */
 .simulator-section { text-align: center; }
 #bille-slider {
     -webkit-appearance: none; width: 100%; height: 8px; background: #d4c5b0; border-radius: 4px; outline: none; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4); margin-top: 15px;
@@ -100,24 +91,11 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
     box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5); cursor: pointer;
 }
 
-/* --- Les cases de texte Sunae --- */
 .sunae-letter-box {
-    position: absolute;
-    text-align: center;
-    font-family: 'Courier New', Courier, monospace;
-    font-weight: bold;
-    font-size: 24px;
-    border: 1px solid rgba(127, 140, 141, 0.6);
-    background: transparent;
-    color: #2c3e50;
-    pointer-events: auto; /* Permet de cliquer dessus */
-    box-sizing: border-box;
-    text-transform: uppercase;
-    transition: all 0.2s ease;
+    position: absolute; text-align: center; font-family: 'Courier New', Courier, monospace; font-weight: bold; font-size: 24px;
+    border: 1px solid rgba(127, 140, 141, 0.6); background: transparent; color: #2c3e50;
+    pointer-events: auto; box-sizing: border-box; text-transform: uppercase; transition: all 0.2s ease;
 }
 .sunae-letter-box:focus {
-    border: 2px solid #e74c3c;
-    background: rgba(255, 255, 255, 0.6);
-    outline: none;
-    box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
+    border: 2px solid #e74c3c; background: rgba(255, 255, 255, 0.6); outline: none; box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
 }
