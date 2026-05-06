@@ -6,7 +6,6 @@ from flask import Flask, render_template, request, send_file, jsonify
 
 app = Flask(__name__)
 
-# --- 1. POLICE PERSONNALISÉE ---
 def get_custom_alphabet():
     return {
         'A': [(0.0, 0.015), (0.143, 0.012), (0.404, 0.995), (0.444, 0.998), (0.577, 0.412), (0.427, 0.41), (0.499, 0.744), (0.499, 0.995), (0.611, 1.0), (0.858, 0.0), (0.673, 0.005), (0.607, 0.249), (0.396, 0.249), (0.335, 0.002), (0.335, 0.002), (0.122, 0.005), (0.336, 0.005), (0.398, 0.239), (0.609, 0.251), (0.674, 0.0), (1.0, 0.005)],
@@ -117,9 +116,6 @@ def export_thr():
         raw_points = []
         cumulative_theta = 0.0
 
-        # ==============================================================
-        # MODULE TEXTE AUTOMATIQUE
-        # ==============================================================
         if module_name == "Texte Automatique":
             text_lines = data.get('text_lines', [])
             alphabet = get_custom_alphabet()
@@ -217,18 +213,19 @@ def export_thr():
                     cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
                     raw_points.append((cumulative_theta, math.hypot(cx, cy)))
 
-        # ==============================================================
-        # MODULE DESSIN LIBRE
-        # ==============================================================
         elif module_name == "Dessin Libre":
             objects = data.get('drawing', {}).get('objects', [])
             
             user_strokes = [obj for obj in objects if obj.get('isUserStroke')]
             user_strokes.sort(key=lambda x: x.get('createdAt', 0))
 
-            w, h = 600, 600
-            if table_type == "Dimension S": w, h = 700, 350
-            elif table_type == "Dimension L": w, h = 800, 400
+            # CRUCIAL: Utilise la taille du canevas du navigateur pour la normalisation !
+            w = data.get('canvasWidth', 600)
+            h = data.get('canvasHeight', 600)
+            if w == 0 or h == 0:
+                if table_type == "Dimension S": w, h = 700, 350
+                elif table_type == "Dimension L": w, h = 800, 400
+                else: w, h = 600, 600
             
             center_x, center_y = w / 2.0, h / 2.0
             max_radius = min(w, h) / 2.0
@@ -289,8 +286,6 @@ def export_thr():
         mem_file.write(file_content.encode('utf-8'))
         mem_file.seek(0)
 
-        # Le nom du fichier n'est plus généré ici car on gère le téléchargement depuis le JS !
-        
         try:
             return send_file(mem_file, as_attachment=True, download_name="export.thr", mimetype='text/plain')
         except TypeError:
