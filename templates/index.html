@@ -100,7 +100,7 @@
 
                     <div id="tools-texte" style="display: none;">
                         <h3>Génération de Texte</h3>
-                        <div style="background: rgba(46, 204, 113, 0.1); border-left: 3px solid #2ecc71; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0;">
+                        <div style="background: rgba(46, 204, 113, 0.1); border-left: 3px solid #2ecc71; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0; border-radius: 4px;">
                             ℹ️ Tapez directement vos lettres dans les cases.
                         </div>
                         <div class="action-buttons">
@@ -118,7 +118,18 @@
                         </div>
 
                         <button class="primary-btn" id="btn-optimize-svg" onclick="optimizeSVG()" style="background-color: #9b59b6; margin-top: 5px;">⚡ CALCULER LE TRAJET</button>
-                        <button class="action-buttons" onclick="resetSVG()" style="margin-top: 10px; width: 100%; padding: 8px;">🗑 Annuler</button>
+                        
+                        <div id="svg-progress-container" style="display: none; margin-top: 15px;">
+                            <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 5px; display: flex; justify-content: space-between;">
+                                <span>Calcul en cours...</span>
+                                <span id="svg-progress-text" style="font-weight: bold; color: #9b59b6;">0%</span>
+                            </div>
+                            <div style="width: 100%; background: #171d2b; border: 1px solid #2a3441; border-radius: 6px; height: 10px; overflow: hidden;">
+                                <div id="svg-progress-bar" style="width: 0%; height: 100%; background: #9b59b6; transition: width 0.1s ease-out;"></div>
+                            </div>
+                        </div>
+
+                        <button class="action-buttons" onclick="resetSVG()" style="margin-top: 10px; width: 100%; padding: 8px; border: 1px solid #555; background: transparent; color: white; border-radius: 6px; cursor: pointer;">🗑 Annuler l'image</button>
                     </div>
                     
                     <div id="background-section">
