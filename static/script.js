@@ -9,14 +9,14 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// Configurations des grilles de texte importées du Python
+// Configurations des grilles de texte importées de ton code Python
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES ---
+// --- FONCTION DE SÉCURITÉ DES BORDURES (DESSIN LIBRE) ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -53,9 +53,12 @@ function goToStep(step, moduleName = null) {
             bgSection.style.display = 'none';
             toolsDessin.style.display = 'none';
             
-            // AFFICHER LE TEXTE
+            // AFFICHER LES OUTILS TEXTE
             toolsTexte.style.display = 'block';
-            if (canvas) canvas.isDrawingMode = false;
+            if (canvas) {
+                canvas.isDrawingMode = false;
+                canvas.clear(); // Nettoie le sable
+            }
             
             // Générer la grille un court instant après pour que le canevas ait sa taille finale
             setTimeout(buildTextGrid, 50); 
@@ -67,10 +70,13 @@ function goToStep(step, moduleName = null) {
             bgSection.style.display = 'block';
             toolsDessin.style.display = 'block';
             
-            // MASQUER LE TEXTE
+            // MASQUER LES OUTILS TEXTE
             toolsTexte.style.display = 'none';
-            gridContainer.innerHTML = ''; // Détruit la grille
-            if (canvas) canvas.isDrawingMode = (drawMode === 'freedraw');
+            gridContainer.innerHTML = ''; // Détruit la grille visuelle
+            if (canvas) {
+                canvas.isDrawingMode = (drawMode === 'freedraw');
+                updateTravelLines(); // Remet les lignes rouges si elles étaient là
+            }
         }
     }
 }
@@ -85,7 +91,7 @@ function buildTextGrid() {
     const center_px = canvas.width / 2.0;
     const center_py = canvas.height / 2.0;
     
-    // Calcul de l'échelle par rapport au conteneur HTML
+    // Calcul de l'échelle par rapport au conteneur HTML (Identique au Python)
     let xmax = 1.0;
     if (!cfg.round) {
         let ymax = 1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1);
@@ -116,12 +122,13 @@ function buildTextGrid() {
             input.dataset.row = r;
             input.dataset.col = c;
             
+            // Position absolue CSS
             input.style.width = entry_w + 'px';
             input.style.height = entry_h + 'px';
             input.style.left = (px - entry_w / 2) + 'px';
             input.style.top = (py - entry_h / 2) + 'px';
 
-            // Comportement de la frappe (Avancement auto)
+            // Comportement de la frappe (Avancement auto comme ton app Tkinter)
             input.addEventListener('keyup', function(e) {
                 if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
                 this.value = this.value.toUpperCase();
@@ -170,6 +177,8 @@ function setupWorkspace(tableName, round, w, h) {
 
     // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
+        if (currentModule !== 'Dessin Libre') return;
+        
         let pathObj = e.path;
         let absolutePathArr = [];
         let offsetX = pathObj.left - pathObj.pathOffset.x;
@@ -240,9 +249,9 @@ function setupWorkspace(tableName, round, w, h) {
 
     setupBackgroundControls();
     setupSimulator();
+    if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
     else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -253,7 +262,6 @@ function getStrokeEnd(stroke) {
     else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -336,7 +344,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (Seulement pour Dessin Libre) ---
+// --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -464,7 +472,6 @@ window.exportTHR = function() {
     };
 
     if (currentModule === 'Texte Automatique') {
-        // Mode Texte : On récupère ce qu'il y a dans les cases
         const cfg = TABLE_CFG[currentTable];
         let text_lines = [];
         for (let r = 0; r < cfg.rows.length; r++) {
@@ -477,7 +484,6 @@ window.exportTHR = function() {
         }
         exportData.text_lines = text_lines;
     } else {
-        // Mode Dessin : On récupère les traits du canevas
         if (!canvas) return;
         document.getElementById('bille-slider').value = 100;
         document.getElementById('bille-slider').dispatchEvent(new Event('input'));
