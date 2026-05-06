@@ -203,7 +203,7 @@ button:hover {
     background-color: var(--sand-color);
     border: 4px dashed #bdc3c7;
     position: relative;
-    /* Les dimensions et le border-radius seront gérés dynamiquement par le JS */
+    overflow: hidden; /* <-- LA SOLUTION MAGIQUE EST ICI */
 }
 
 /* On s'assure que le canvas interne prend toute la place du conteneur */
