@@ -6,6 +6,7 @@ from flask import Flask, render_template, request, send_file, jsonify
 
 app = Flask(__name__)
 
+# --- 1. POLICE PERSONNALISÉE ---
 def get_custom_alphabet():
     return {
         'A': [(0.0, 0.015), (0.143, 0.012), (0.404, 0.995), (0.444, 0.998), (0.577, 0.412), (0.427, 0.41), (0.499, 0.744), (0.499, 0.995), (0.611, 1.0), (0.858, 0.0), (0.673, 0.005), (0.607, 0.249), (0.396, 0.249), (0.335, 0.002), (0.335, 0.002), (0.122, 0.005), (0.336, 0.005), (0.398, 0.239), (0.609, 0.251), (0.674, 0.0), (1.0, 0.005)],
@@ -50,7 +51,7 @@ def get_custom_alphabet():
         ' ': [(0.0, 0.0), (1.0, 0.0)]
     }
 
-# --- 2. CONFIGURATIONS DES MACHINES ---
+# --- CONFIGURATIONS DES MACHINES ---
 TABLE_CONFIGS = {
     "Origin S": { "is_round": True, "rows": [6, 8, 8, 6], "y_centers": [0.45, 0.15, -0.15, -0.45], "w": 0.20, "h": 0.24, "spacing": 0.00, "aspect": 1.0 },
     "Dimension S": { "is_round": False, "rows": [14, 14, 14], "y_centers": [0.25, 0.0, -0.25], "w": 0.11, "h": 0.15, "spacing": 0.015, "aspect": 1300.0 / 600.0 },
@@ -66,7 +67,7 @@ for name, cfg in TABLE_CONFIGS.items():
         cfg["ymax"] = 1.0
         cfg["xmax"] = 1.0
 
-# --- 3. FONCTIONS MATHS ET ROUTAGE ---
+# --- FONCTIONS MATHS ET ROUTAGE ---
 def discretize_points(key_points, max_segment_length=0.015):
     if not key_points or len(key_points) < 2: return key_points
     smooth_path = [key_points[0]]
@@ -97,7 +98,7 @@ def generate_arc_polar(theta_start, theta_end, steps=40):
         pts.append((t, 1.0))
     return pts, theta_start + delta
 
-# --- 4. SERVEUR FLASK ---
+# --- SERVEUR FLASK ---
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -116,6 +117,9 @@ def export_thr():
         raw_points = []
         cumulative_theta = 0.0
 
+        # ==============================================================
+        # TEXTE AUTOMATIQUE
+        # ==============================================================
         if module_name == "Texte Automatique":
             text_lines = data.get('text_lines', [])
             alphabet = get_custom_alphabet()
@@ -213,61 +217,36 @@ def export_thr():
                     cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
                     raw_points.append((cumulative_theta, math.hypot(cx, cy)))
 
-        elif module_name == "Dessin Libre":
+        # ==============================================================
+        # DESSIN LIBRE & SVG (Le JS fait le TSP et l'envoie prêt)
+        # ==============================================================
+        elif module_name in ["Dessin Libre", "Fichier SVG"]:
             objects = data.get('drawing', {}).get('objects', [])
             
-            user_strokes = [obj for obj in objects if obj.get('isUserStroke')]
-            user_strokes.sort(key=lambda x: x.get('createdAt', 0))
+            # On prend les traits et les liaisons dans l'ordre strict
+            valid_objs = [obj for obj in objects if obj.get('isUserStroke') or obj.get('isTravelLine')]
+            valid_objs.sort(key=lambda x: x.get('createdAt', 0))
 
-            # CRUCIAL: Utilise la taille du canevas du navigateur pour la normalisation !
             w = data.get('canvasWidth', 600)
             h = data.get('canvasHeight', 600)
-            if w == 0 or h == 0:
-                if table_type == "Dimension S": w, h = 700, 350
-                elif table_type == "Dimension L": w, h = 800, 400
-                else: w, h = 600, 600
-            
             center_x, center_y = w / 2.0, h / 2.0
             max_radius = min(w, h) / 2.0
 
             all_norm_points = []
-            last_pt = None
             
-            for obj in user_strokes:
-                stroke_pts = []
-                if obj.get('type') == 'path':
-                    abs_points = obj.get('sunaeAbsPoints')
-                    if abs_points:
-                        for pt in abs_points:
-                            nx = (pt['x'] - center_x) / max_radius
-                            ny = (center_y - pt['y']) / max_radius
-                            stroke_pts.append((nx, ny))
-                elif obj.get('type') == 'line':
+            for obj in valid_objs:
+                abs_points = obj.get('sunaeAbsPoints')
+                if abs_points:
+                    for pt in abs_points:
+                        nx = (pt['x'] - center_x) / max_radius
+                        ny = (center_y - pt['y']) / max_radius
+                        all_norm_points.append((nx, ny))
+                elif obj.get('type') == 'line': # Au cas où
                     n_x1 = (obj.get('x1', 0) - center_x) / max_radius
                     n_y1 = (center_y - obj.get('y1', 0)) / max_radius
                     n_x2 = (obj.get('x2', 0) - center_x) / max_radius
                     n_y2 = (center_y - obj.get('y2', 0)) / max_radius
-                    stroke_pts.extend([(n_x1, n_y1), (n_x2, n_y2)])
-
-                if stroke_pts:
-                    clamped_stroke = []
-                    for nx, ny in stroke_pts:
-                        if cfg["is_round"]:
-                            mag = math.hypot(nx, ny)
-                            if mag > 1.0:
-                                nx, ny = nx/mag, ny/mag
-                        else:
-                            nx = max(-cfg["xmax"], min(nx, cfg["xmax"]))
-                            ny = max(-cfg["ymax"], min(ny, cfg["ymax"]))
-                        clamped_stroke.append((nx, ny))
-                    
-                    if last_pt is not None:
-                        travel = discretize_points([last_pt, clamped_stroke[0]])
-                        all_norm_points.extend(travel[1:]) 
-                        
-                    smooth_stroke = discretize_points(clamped_stroke)
-                    all_norm_points.extend(smooth_stroke)
-                    last_pt = smooth_stroke[-1]
+                    all_norm_points.extend([(n_x1, n_y1), (n_x2, n_y2)])
 
             clean_points = []
             for p in all_norm_points:
