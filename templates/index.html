@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=1200">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Sunae Studio</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -83,7 +83,7 @@
             <div class="workspace-grid">
                 
                 <div class="tools-panel">
-                    <div id="tools-dessin">
+                    <div id="tools-dessin" style="display: none;">
                         <h3>Outils de Dessin</h3>
                         <div class="tool-group">
                             <label>Mode :</label><br>
@@ -101,11 +101,24 @@
                     <div id="tools-texte" style="display: none;">
                         <h3>Génération de Texte</h3>
                         <div style="background: rgba(46, 204, 113, 0.1); border-left: 3px solid #2ecc71; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0;">
-                            ℹ️ <b>Police Sunae :</b> Tapez directement vos lettres dans les cases qui apparaissent sur la table.
+                            ℹ️ Tapez directement vos lettres dans les cases.
                         </div>
-                        <div class="action-buttons" style="margin-top: 10px;">
-                            <button onclick="resetTextGrid()" style="width: 100%;">🗑 Effacer le texte</button>
+                        <div class="action-buttons">
+                            <button onclick="resetTextGrid()" style="width: 100%;">🗑 Effacer</button>
                         </div>
+                    </div>
+
+                    <div id="tools-svg" style="display: none;">
+                        <h3>Convertir un SVG</h3>
+                        <input type="file" id="svg-upload-file" accept=".svg" style="display: none;">
+                        <label for="svg-upload-file" class="upload-btn" style="border-color: #9b59b6; color: #9b59b6;">📂 Importer un SVG</label>
+                        
+                        <div style="background: rgba(155, 89, 182, 0.1); border-left: 3px solid #9b59b6; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0;">
+                            Placez et dimensionnez l'image. Le bouton ci-dessous calculera le trajet optimal par l'extérieur.
+                        </div>
+
+                        <button class="primary-btn" id="btn-optimize-svg" onclick="optimizeSVG()" style="background-color: #9b59b6; margin-top: 5px;">⚡ CALCULER LE TRAJET</button>
+                        <button class="action-buttons" onclick="resetSVG()" style="margin-top: 10px; width: 100%; padding: 8px;">🗑 Annuler</button>
                     </div>
                     
                     <div id="background-section">
