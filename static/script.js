@@ -42,7 +42,7 @@ function setupWorkspace(tableName, round, w, h) {
     container.style.width = w + 'px';
     container.style.height = h + 'px';
     container.style.borderRadius = isRound ? '50%' : '20px';
-    container.style.overflow = 'hidden'; // Force la coupure visuelle absolue
+    container.style.overflow = 'hidden';
 
     canvas = new fabric.Canvas('sunae-canvas', {
         width: w,
@@ -51,7 +51,6 @@ function setupWorkspace(tableName, round, w, h) {
         selection: false
     });
 
-    // MASQUE DE DÉCOUPE : Dit à Fabric.js d'ignorer les coins !
     if (isRound) {
         canvas.clipPath = new fabric.Circle({
             radius: w / 2,
@@ -155,7 +154,8 @@ function updateTravelLines() {
                 opacity: 0.7,
                 selectable: false,
                 evented: false,
-                isTravelLine: true
+                isTravelLine: true,
+                travelIndex: i - 1 // LE CORRECTIF EST ICI : Un numéro d'ordre strict
             });
             canvas.add(redLine);
             redLine.sendToBack();
@@ -252,7 +252,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (Découpage réel des traits) ---
+// --- 6. LE SIMULATEUR ANIMÉ (Ordre Parfait) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     
@@ -267,7 +267,6 @@ function setupSimulator() {
         simOverlay.style.height = '100%';
         simOverlay.style.pointerEvents = 'none';
         
-        // Hérite de la bordure coupée du container !
         simOverlay.style.borderRadius = isRound ? '50%' : '20px';
         simOverlay.style.overflow = 'hidden';
         
@@ -279,15 +278,17 @@ function setupSimulator() {
         simOverlay.innerHTML = '';
 
         const strokes = canvas.getObjects().filter(o => o.isUserStroke);
-        const travels = canvas.getObjects().filter(o => o.isTravelLine);
+        
+        // LE CORRECTIF EST ICI : On force le tri des lignes rouges par leur numéro d'ordre
+        const travels = canvas.getObjects()
+            .filter(o => o.isTravelLine)
+            .sort((a, b) => a.travelIndex - b.travelIndex);
 
-        // --- RETOUR À 100% : ON RESTAURE TOUT ---
         if (percent === 100) {
             canvas.isDrawingMode = (drawMode === 'freedraw');
             canvas.getObjects().forEach(o => {
                 if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
-                    // On restaure les chemins originaux
                     if (o.type === 'path' && o.origPath) o.set({ path: o.origPath });
                     if (o.type === 'line' && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
                 }
@@ -296,7 +297,6 @@ function setupSimulator() {
             return;
         }
 
-        // --- MODE SIMULATION ---
         canvas.isDrawingMode = false;
         
         let allSegments = [];
@@ -307,7 +307,6 @@ function setupSimulator() {
 
         let totalLength = 0;
 
-        // Préparation et Sauvegarde de l'état initial des traits
         allSegments.forEach(seg => {
             if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
             if (seg.type === 'line' && seg.origX2 === undefined) {
@@ -315,12 +314,11 @@ function setupSimulator() {
                 seg.origX2 = seg.x2; seg.origY2 = seg.y2;
             }
 
-            // Calcul de la "longueur" temporelle du trait
             if (seg.type === 'path') {
-                seg.segmentLength = seg.origPath.length; // Basé sur le nombre de points
+                seg.segmentLength = seg.origPath.length;
             } else if (seg.type === 'line') {
                 const dist = Math.hypot(seg.origX2 - seg.origX1, seg.origY2 - seg.origY1);
-                seg.segmentLength = Math.max(1, dist / 4); // Équilibré par rapport aux courbes
+                seg.segmentLength = Math.max(1, dist / 4);
             }
             totalLength += seg.segmentLength;
         });
@@ -332,16 +330,12 @@ function setupSimulator() {
         let currentDotPos = null;
         let startDotPos = null;
 
-        // Découpage et Animation
         allSegments.forEach((seg, index) => {
-            
-            // Point de départ (Vert)
             if (index === 0) {
                  if (seg.type === 'path') startDotPos = {x: seg.origPath[0][1], y: seg.origPath[0][2]};
                  else if (seg.type === 'line') startDotPos = {x: seg.origX1, y: seg.origY1};
             }
 
-            // 1. Trait entièrement parcouru
             if (currentLength + seg.segmentLength <= targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 if (seg.type === 'path') seg.set({ path: seg.origPath });
@@ -355,15 +349,12 @@ function setupSimulator() {
                 }
                 currentLength += seg.segmentLength;
             }
-            
-            // 2. Trait EN COURS de dessin (La découpe magique !)
             else if (currentLength < targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 const remainingLength = targetLength - currentLength;
                 const ratio = remainingLength / seg.segmentLength;
 
                 if (seg.type === 'path') {
-                    // On ne garde que les 'N' premiers points du chemin !
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
                     seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
 
@@ -374,7 +365,6 @@ function setupSimulator() {
                         currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
                     }
                 } else if (seg.type === 'line') {
-                    // On modifie l'arrivée de la ligne pour qu'elle s'arrête au milieu
                     const newX2 = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
                     const newY2 = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
                     seg.set({ x2: newX2, y2: newY2 });
@@ -382,14 +372,11 @@ function setupSimulator() {
                 }
                 currentLength += seg.segmentLength; 
             }
-            
-            // 3. Trait dans le futur (Caché)
             else {
                 seg.set({ opacity: 0 });
             }
         });
 
-        // Affichage des points Vert (Départ) et Rouge (Bille)
         let svgDots = '';
         if (targetLength > 0 && startDotPos) {
              svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
@@ -407,7 +394,6 @@ function setupSimulator() {
 function exportTHR() {
     if (!canvas) return;
 
-    // Pour l'exportation on remet tout à 100% temporairement pour récupérer les vrais tracés complets
     document.getElementById('bille-slider').value = 100;
     document.getElementById('bille-slider').dispatchEvent(new Event('input'));
 
