@@ -9,14 +9,12 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// Configurations des grilles de texte importées du Python
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -29,7 +27,6 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// --- 1. NAVIGATION DES ÉTAPES ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -75,7 +72,6 @@ function goToStep(step, moduleName = null) {
     }
 }
 
-// --- GÉNÉRATION DE LA GRILLE WYSIWYG ---
 function buildTextGrid() {
     const grid = document.getElementById('text-grid-container');
     grid.innerHTML = '';
@@ -140,7 +136,6 @@ window.resetTextGrid = function() {
     document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
 }
 
-// --- 2. INITIALISATION DE L'ESPACE DE TRAVAIL ---
 function setupWorkspace(tableName, round, w, h) {
     currentTable = tableName;
     isRound = round;
@@ -175,25 +170,16 @@ function setupWorkspace(tableName, round, w, h) {
         let offsetY = pathObj.top - pathObj.pathOffset.y;
 
         let absPoints = []; 
-
+        
+        // CORRECTION MAJEURE: Le trait d'origine n'est PLUS modifié visuellement. 
+        // On calcule juste les points exacts en arrière-plan.
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let relX = cmd[1] - pathObj.pathOffset.x;
-                let relY = cmd[2] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
-                let crX = cmd[1] - pathObj.pathOffset.x;
-                let crY = cmd[2] - pathObj.pathOffset.y;
-                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
-                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
-                
-                let rX = cmd[3] - pathObj.pathOffset.x;
-                let rY = cmd[4] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y}); 
             }
         }
@@ -202,7 +188,7 @@ function setupWorkspace(tableName, round, w, h) {
             selectable: false, 
             isUserStroke: true, 
             createdAt: Date.now(),
-            sunaeAbsPoints: absPoints 
+            sunaeAbsPoints: absPoints
         });
         
         updateTravelLines();
@@ -248,19 +234,19 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- LECTURE ABSOLUE ET PRÉCISE POUR LE TRAIT ROUGE (CORRECTION ICI) ---
+// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
         return { x: stroke.sunaeAbsPoints[0].x, y: stroke.sunaeAbsPoints[0].y };
     }
-    else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+    return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
 }
 
 function getStrokeEnd(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
         return { x: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].x, y: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].y };
     }
-    else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+    return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
 // --- 3. LOGIQUE DES LIGNES ROUGES ---
@@ -286,7 +272,6 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- 4. ACTIONS: UNDO ET RESET ---
 window.undoStroke = function() {
     const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     if (strokes.length > 0) {
@@ -300,7 +285,6 @@ window.resetCanvas = function() {
     canvas.renderAll();
 }
 
-// --- 5. GESTION DE L'IMAGE DE FOND ---
 function setupBackgroundControls() {
     const uploadInput = document.getElementById('bg-upload');
     const scaleSlider = document.getElementById('bg-scale');
@@ -346,7 +330,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (CORRECTION ICI) ---
+// --- 6. LE SIMULATEUR ANIMÉ (CORRECTION DU POINT ROUGE) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -373,7 +357,13 @@ function setupSimulator() {
             canvas.getObjects().forEach(o => {
                 if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
-                    if (o.type === 'path' && o.origPath) o.set({ path: o.origPath });
+                    if (o.type === 'path' && o.origPath) {
+                        o.set({ 
+                            path: o.origPath, left: o.origLeft, top: o.origTop, 
+                            pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), 
+                            width: o.origWidth, height: o.origHeight 
+                        });
+                    }
                     if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
                 }
             });
@@ -394,7 +384,14 @@ function setupSimulator() {
 
         let totalLength = 0;
         allSegments.forEach(seg => {
-            if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
+            if (seg.type === 'path' && !seg.origPath) {
+                seg.origPath = seg.path;
+                seg.origLeft = seg.left;
+                seg.origTop = seg.top;
+                seg.origPathOffset = { x: seg.pathOffset.x, y: seg.pathOffset.y };
+                seg.origWidth = seg.width;
+                seg.origHeight = seg.height;
+            }
             if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
                 seg.origX1 = seg.x1; seg.origY1 = seg.y1; seg.origX2 = seg.x2; seg.origY2 = seg.y2;
             }
@@ -429,8 +426,10 @@ function setupSimulator() {
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
+                    
+                    seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
 
-                    // CORRECTION ICI : On utilise les points absolus en mémoire pour le point rouge
+                    // CORRECTION DU SUIVI DU POINT ROUGE
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
                         const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
                         currentDotPos = { x: seg.sunaeAbsPoints[targetIdx].x, y: seg.sunaeAbsPoints[targetIdx].y };
@@ -466,7 +465,6 @@ function setupSimulator() {
     });
 }
 
-// --- 7. EXPORTATION VERS FLASK ---
 window.exportTHR = function() {
     let exportData = {
         table: currentTable,
