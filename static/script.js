@@ -53,8 +53,10 @@ function goToStep(step, moduleName = null) {
             toolsDessin.style.display = 'none';
             
             toolsTexte.style.display = 'block';
-            if (canvas) canvas.isDrawingMode = false;
-            
+            if (canvas) {
+                canvas.isDrawingMode = false;
+                canvas.clear(); 
+            }
             setTimeout(buildTextGrid, 50); 
             
         } else {
@@ -65,7 +67,10 @@ function goToStep(step, moduleName = null) {
             
             toolsTexte.style.display = 'none';
             gridContainer.innerHTML = ''; 
-            if (canvas) canvas.isDrawingMode = (drawMode === 'freedraw');
+            if (canvas) {
+                canvas.isDrawingMode = (drawMode === 'freedraw');
+                updateTravelLines();
+            }
         }
     }
 }
@@ -161,7 +166,7 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- GESTION DU DESSIN LIBRE (CORRECTION DU SAUT DE TRACÉ) ---
+    // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
@@ -169,9 +174,8 @@ function setupWorkspace(tableName, round, w, h) {
         let offsetX = pathObj.left - pathObj.pathOffset.x;
         let offsetY = pathObj.top - pathObj.pathOffset.y;
 
-        let absPoints = []; // On stocke les points absolus mathématiques pour l'export
+        let absPoints = []; 
 
-        // On modifie les coordonnées à la volée, sans détruire le tracé Fabric !
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
@@ -194,7 +198,7 @@ function setupWorkspace(tableName, round, w, h) {
             selectable: false, 
             isUserStroke: true, 
             createdAt: Date.now(),
-            sunaeAbsPoints: absPoints // Utilisé par le backend pour générer le .THR
+            sunaeAbsPoints: absPoints
         });
         
         pathObj.absStartX = absPoints[0].x; 
@@ -202,7 +206,7 @@ function setupWorkspace(tableName, round, w, h) {
         pathObj.absEndX = absPoints[absPoints.length - 1].x; 
         pathObj.absEndY = absPoints[absPoints.length - 1].y;
 
-        pathObj.setCoords(); // Met à jour la boîte de collision discrètement
+        pathObj.setCoords(); 
         updateTravelLines();
         canvas.renderAll();
     });
@@ -247,7 +251,6 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
     else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -258,7 +261,6 @@ function getStrokeEnd(stroke) {
     else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -281,7 +283,6 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- 4. ACTIONS: UNDO ET RESET ---
 window.undoStroke = function() {
     const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     if (strokes.length > 0) {
@@ -295,7 +296,6 @@ window.resetCanvas = function() {
     canvas.renderAll();
 }
 
-// --- 5. GESTION DE L'IMAGE DE FOND ---
 function setupBackgroundControls() {
     const uploadInput = document.getElementById('bg-upload');
     const scaleSlider = document.getElementById('bg-scale');
@@ -341,7 +341,6 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -355,7 +354,7 @@ function setupSimulator() {
     }
     
     slider.addEventListener('input', function() {
-        if (currentModule !== 'Dessin Libre') return; // Sécurité
+        if (currentModule !== 'Dessin Libre') return; 
 
         const percent = parseInt(this.value);
         simOverlay.innerHTML = '';
@@ -461,7 +460,6 @@ function setupSimulator() {
     });
 }
 
-// --- 7. EXPORTATION VERS FLASK ---
 window.exportTHR = function() {
     let exportData = {
         table: currentTable,
@@ -485,7 +483,6 @@ window.exportTHR = function() {
         document.getElementById('bille-slider').value = 100;
         document.getElementById('bille-slider').dispatchEvent(new Event('input'));
         
-        // On exporte bien les points absolus qu'on a calculé pour empêcher les erreurs !
         exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
     }
 
