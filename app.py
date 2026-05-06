@@ -9,24 +9,26 @@ app = Flask(__name__)
 def home():
     return render_template('index.html')
 
-# Route API : C'est ici que Javascript enverra le dessin pour le convertir en .THR
+# Route API : Réception des données pour créer le fichier .THR
 @app.route('/export-thr', methods=['POST'])
 def export_thr():
     data = request.json
-    drawing_data = data.get('drawing')
     table_type = data.get('table')
+    module_name = data.get('module')
+    drawing_data = data.get('drawing')
+    
+    print(f"--- NOUVEL EXPORT ---")
+    print(f"Table : {table_type}")
+    print(f"Module : {module_name}")
     
     # -------------------------------------------------------------
-    # ICI : Nous remettrons tes mathématiques Python d'origine 
-    # pour générer le fichier .THR à partir de drawing_data.
+    # C'est ICI que nous allons intégrer ton script Python d'origine.
+    # 1. Si module_name == "Texte Automatique", on lira les objets "isSunaeText" 
+    #    et on utilisera ton dictionnaire de lettres pour générer le parcours.
+    # 2. Si module_name == "Dessin Libre", on lira les tracés bruts.
     # -------------------------------------------------------------
     
-    print(f"Dessin reçu pour la table : {table_type}")
-    print(f"Nombre d'objets tracés : {len(drawing_data)}")
-    
-    # Pour l'instant, on renvoie juste un message de succès
-    return jsonify({"status": "success", "message": "Fichier THR généré (simulation)"})
+    return jsonify({"status": "success", "message": "Fichier prêt ! (La génération du vrai .THR sera bientôt connectée ici)"})
 
 if __name__ == '__main__':
-    # Lancement du serveur local
     app.run(debug=True)
