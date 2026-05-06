@@ -9,14 +9,14 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// Configurations des grilles de texte importées de ton code Python
+// Configurations des grilles de texte importées du Python
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES (DESSIN LIBRE) ---
+// --- FONCTION DE SÉCURITÉ DES BORDURES ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -29,7 +29,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// --- 1. NAVIGATION DES ÉTAPES ET GESTION DE L'AFFICHAGE ---
+// --- 1. NAVIGATION DES ÉTAPES ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
@@ -47,36 +47,25 @@ function goToStep(step, moduleName = null) {
         const gridContainer = document.getElementById('text-grid-container');
 
         if (currentModule === 'Texte Automatique') {
-            // MASQUER LES ÉLÉMENTS DU DESSIN LIBRE
             simSection.style.display = 'none';
             simHr.style.display = 'none';
             bgSection.style.display = 'none';
             toolsDessin.style.display = 'none';
             
-            // AFFICHER LES OUTILS TEXTE
             toolsTexte.style.display = 'block';
-            if (canvas) {
-                canvas.isDrawingMode = false;
-                canvas.clear(); // Nettoie le sable
-            }
+            if (canvas) canvas.isDrawingMode = false;
             
-            // Générer la grille un court instant après pour que le canevas ait sa taille finale
             setTimeout(buildTextGrid, 50); 
             
         } else {
-            // AFFICHER LES ÉLÉMENTS DU DESSIN LIBRE
             simSection.style.display = 'block';
             simHr.style.display = 'block';
             bgSection.style.display = 'block';
             toolsDessin.style.display = 'block';
             
-            // MASQUER LES OUTILS TEXTE
             toolsTexte.style.display = 'none';
-            gridContainer.innerHTML = ''; // Détruit la grille visuelle
-            if (canvas) {
-                canvas.isDrawingMode = (drawMode === 'freedraw');
-                updateTravelLines(); // Remet les lignes rouges si elles étaient là
-            }
+            gridContainer.innerHTML = ''; 
+            if (canvas) canvas.isDrawingMode = (drawMode === 'freedraw');
         }
     }
 }
@@ -91,7 +80,6 @@ function buildTextGrid() {
     const center_px = canvas.width / 2.0;
     const center_py = canvas.height / 2.0;
     
-    // Calcul de l'échelle par rapport au conteneur HTML (Identique au Python)
     let xmax = 1.0;
     if (!cfg.round) {
         let ymax = 1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1);
@@ -122,13 +110,11 @@ function buildTextGrid() {
             input.dataset.row = r;
             input.dataset.col = c;
             
-            // Position absolue CSS
             input.style.width = entry_w + 'px';
             input.style.height = entry_h + 'px';
             input.style.left = (px - entry_w / 2) + 'px';
             input.style.top = (py - entry_h / 2) + 'px';
 
-            // Comportement de la frappe (Avancement auto comme ton app Tkinter)
             input.addEventListener('keyup', function(e) {
                 if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
                 this.value = this.value.toUpperCase();
@@ -175,41 +161,50 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- GESTION DU DESSIN LIBRE ---
+    // --- GESTION DU DESSIN LIBRE (CORRECTION DU SAUT DE TRACÉ) ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
-        let absolutePathArr = [];
         let offsetX = pathObj.left - pathObj.pathOffset.x;
         let offsetY = pathObj.top - pathObj.pathOffset.y;
 
+        let absPoints = []; // On stocke les points absolus mathématiques pour l'export
+
+        // On modifie les coordonnées à la volée, sans détruire le tracé Fabric !
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
-            let newCmd = [...cmd];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
                 let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
-                newCmd[1] = p.x; newCmd[2] = p.y;
+                cmd[1] = p.x - offsetX; 
+                cmd[2] = p.y - offsetY;
+                absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
                 let cp = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
                 let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
-                newCmd[1] = cp.x; newCmd[2] = cp.y; newCmd[3] = p.x; newCmd[4] = p.y;
+                cmd[1] = cp.x - offsetX; 
+                cmd[2] = cp.y - offsetY;
+                cmd[3] = p.x - offsetX; 
+                cmd[4] = p.y - offsetY;
+                absPoints.push({x: p.x, y: p.y}); 
             }
-            absolutePathArr.push(newCmd);
         }
 
-        canvas.remove(pathObj);
-        let clampedPath = new fabric.Path(absolutePathArr, {
-            fill: null, stroke: '#2980b9', strokeWidth: 3, strokeLineCap: 'round', strokeLineJoin: 'round',
-            selectable: false, isUserStroke: true, createdAt: Date.now()
+        pathObj.set({
+            selectable: false, 
+            isUserStroke: true, 
+            createdAt: Date.now(),
+            sunaeAbsPoints: absPoints // Utilisé par le backend pour générer le .THR
         });
         
-        clampedPath.absStartX = absolutePathArr[0][1]; clampedPath.absStartY = absolutePathArr[0][2];
-        let lastCmd = absolutePathArr[absolutePathArr.length - 1];
-        clampedPath.absEndX = lastCmd[lastCmd.length - 2]; clampedPath.absEndY = lastCmd[lastCmd.length - 1];
+        pathObj.absStartX = absPoints[0].x; 
+        pathObj.absStartY = absPoints[0].y;
+        pathObj.absEndX = absPoints[absPoints.length - 1].x; 
+        pathObj.absEndY = absPoints[absPoints.length - 1].y;
 
-        canvas.add(clampedPath);
+        pathObj.setCoords(); // Met à jour la boîte de collision discrètement
         updateTravelLines();
+        canvas.renderAll();
     });
 
     canvas.on('mouse:down', function(o) {
@@ -252,6 +247,7 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
+// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
     else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -262,6 +258,7 @@ function getStrokeEnd(stroke) {
     else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
+// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -487,7 +484,9 @@ window.exportTHR = function() {
         if (!canvas) return;
         document.getElementById('bille-slider').value = 100;
         document.getElementById('bille-slider').dispatchEvent(new Event('input'));
-        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt']);
+        
+        // On exporte bien les points absolus qu'on a calculé pour empêcher les erreurs !
+        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
     }
 
     fetch('/export-thr', {
