@@ -9,12 +9,11 @@ let tempLine = null;
 let bgImageObj = null;
 
 // --- FONCTION DE SÉCURITÉ DES BORDURES (Pour le .THR et le visuel) ---
-// Force les coordonnées à rester strictement à l'intérieur de la table
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2;
         const cy = h / 2;
-        const radius = (w / 2) - 1.5; // On retire 1.5px pour garder le stylo bien à l'intérieur
+        const radius = (w / 2) - 2; // Marge de 2px pour garder la bille dans le sable
         const dx = x - cx;
         const dy = y - cy;
         const dist = Math.hypot(dx, dy);
@@ -27,7 +26,7 @@ function sanitizeCoordinates(x, y, round, w, h) {
         }
         return { x, y };
     } else {
-        const margin = 1.5;
+        const margin = 2;
         return {
             x: Math.max(margin, Math.min(w - margin, x)),
             y: Math.max(margin, Math.min(h - margin, y))
@@ -93,31 +92,38 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // QUAND UN TRAIT LIBRE EST TERMINÉ, ON LE SÉCURISE
+    // INTERCEPTION DU TRAIT LIBRE : On le force dans les limites absolues
     canvas.on('path:created', function(e) {
-        let originalPath = e.path;
-        let pathArr = originalPath.path;
+        let pathObj = e.path;
+        let absolutePathArr = [];
         
-        // On scanne et on corrige chaque point du tracé
-        for (let i = 0; i < pathArr.length; i++) {
-            let cmd = pathArr[i];
+        // Fabric.js utilise des coordonnées relatives. On les repasse en absolu pour le calcul.
+        let offsetX = pathObj.left - pathObj.pathOffset.x;
+        let offsetY = pathObj.top - pathObj.pathOffset.y;
+
+        for (let i = 0; i < pathObj.path.length; i++) {
+            let cmd = pathObj.path[i];
+            let newCmd = [...cmd];
+            
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = sanitizeCoordinates(cmd[1], cmd[2], isRound, canvas.width, canvas.height);
-                cmd[1] = p.x;
-                cmd[2] = p.y;
+                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
+                newCmd[1] = p.x;
+                newCmd[2] = p.y;
             } else if (cmd[0] === 'Q') {
-                let cp = sanitizeCoordinates(cmd[1], cmd[2], isRound, canvas.width, canvas.height);
-                cmd[1] = cp.x;
-                cmd[2] = cp.y;
-                let p = sanitizeCoordinates(cmd[3], cmd[4], isRound, canvas.width, canvas.height);
-                cmd[3] = p.x;
-                cmd[4] = p.y;
+                let cp = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
+                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
+                newCmd[1] = cp.x;
+                newCmd[2] = cp.y;
+                newCmd[3] = p.x;
+                newCmd[4] = p.y;
             }
+            absolutePathArr.push(newCmd);
         }
+
+        canvas.remove(pathObj);
         
-        // On remplace le trait brut par le trait sécurisé
-        canvas.remove(originalPath);
-        let clampedPath = new fabric.Path(pathArr, {
+        // On recrée le trait parfait
+        let clampedPath = new fabric.Path(absolutePathArr, {
             fill: null,
             stroke: '#2980b9',
             strokeWidth: 3,
@@ -127,6 +133,15 @@ function setupWorkspace(tableName, round, w, h) {
             evented: false,
             isUserStroke: true
         });
+        
+        // On sauvegarde explicitement le début et la fin pour la ligne rouge
+        clampedPath.absStartX = absolutePathArr[0][1];
+        clampedPath.absStartY = absolutePathArr[0][2];
+        
+        let lastCmd = absolutePathArr[absolutePathArr.length - 1];
+        clampedPath.absEndX = lastCmd[lastCmd.length - 2];
+        clampedPath.absEndY = lastCmd[lastCmd.length - 1];
+
         canvas.add(clampedPath);
         updateTravelLines();
     });
@@ -136,7 +151,6 @@ function setupWorkspace(tableName, round, w, h) {
         isDrawingLine = true;
         var pointer = canvas.getPointer(o.e);
         
-        // SÉCURITÉ: On corrige le point de départ
         let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
         var points = [p.x, p.y, p.x, p.y];
         
@@ -144,8 +158,6 @@ function setupWorkspace(tableName, round, w, h) {
             strokeWidth: 3,
             fill: '#2980b9',
             stroke: '#2980b9',
-            originX: 'center',
-            originY: 'center',
             selectable: false,
             evented: false,
             isUserStroke: true
@@ -157,7 +169,6 @@ function setupWorkspace(tableName, round, w, h) {
         if (!isDrawingLine || drawMode !== 'line') return;
         var pointer = canvas.getPointer(o.e);
         
-        // SÉCURITÉ: On bloque la ligne droite sur la bordure en direct
         let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
         tempLine.set({ x2: p.x, y2: p.y });
         canvas.renderAll();
@@ -182,23 +193,22 @@ function setupWorkspace(tableName, round, w, h) {
     setupSimulator();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
+// --- FONCTIONS MATHÉMATIQUES ABSOLUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') {
-        const pathArr = stroke.origPath || stroke.path;
-        return { x: pathArr[0][1], y: pathArr[0][2] };
+        return { x: stroke.absStartX, y: stroke.absStartY };
     } else {
-        return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+        return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, 
+                 y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
     }
 }
 
 function getStrokeEnd(stroke) {
     if (stroke.type === 'path') {
-        const pathArr = stroke.origPath || stroke.path;
-        const cmd = pathArr[pathArr.length - 1];
-        return { x: cmd[cmd.length - 2], y: cmd[cmd.length - 1] };
+        return { x: stroke.absEndX, y: stroke.absEndY };
     } else {
-        return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+        return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, 
+                 y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
     }
 }
 
@@ -435,6 +445,11 @@ function setupSimulator() {
                     } else {
                         currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
                     }
+                    
+                    const offsetX = seg.left - seg.pathOffset.x;
+                    const offsetY = seg.top - seg.pathOffset.y;
+                    currentDotPos = { x: currentDotPos.x + offsetX, y: currentDotPos.y + offsetY };
+                    
                 } else if (seg.type === 'line' || seg.isTravelLine) {
                     const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
                     const sy = seg.origY1 !== undefined ? seg.origY1 : seg.y1;
