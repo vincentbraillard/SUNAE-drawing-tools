@@ -6,9 +6,7 @@ from flask import Flask, render_template, request, send_file
 
 app = Flask(__name__)
 
-# =====================================================================
-# 1. POLICE PERSONNALISÉE SUNAE
-# =====================================================================
+# --- 1. POLICE PERSONNALISÉE ---
 def get_custom_alphabet():
     return {
         'A': [(0.0, 0.015), (0.143, 0.012), (0.404, 0.995), (0.444, 0.998), (0.577, 0.412), (0.427, 0.41), (0.499, 0.744), (0.499, 0.995), (0.611, 1.0), (0.858, 0.0), (0.673, 0.005), (0.607, 0.249), (0.396, 0.249), (0.335, 0.002), (0.335, 0.002), (0.122, 0.005), (0.336, 0.005), (0.398, 0.239), (0.609, 0.251), (0.674, 0.0), (1.0, 0.005)],
@@ -53,12 +51,23 @@ def get_custom_alphabet():
         ' ': [(0.0, 0.0), (1.0, 0.0)]
     }
 
-SUNAE_FONT = get_custom_alphabet()
+TABLE_CONFIGS = {
+    "Origin S": { "is_round": True, "rows": [6, 8, 8, 6], "y_centers": [0.45, 0.15, -0.15, -0.45], "w": 0.20, "h": 0.24, "spacing": 0.00, "aspect": 1.0 },
+    "Dimension S": { "is_round": False, "rows": [14, 14, 14], "y_centers": [0.25, 0.0, -0.25], "w": 0.11, "h": 0.15, "spacing": 0.015, "aspect": 1300.0 / 600.0 },
+    "Dimension L": { "is_round": False, "rows": [20, 20, 20, 20], "y_centers": [0.27, 0.09, -0.09, -0.27], "w": 0.075, "h": 0.11, "spacing": 0.01, "aspect": 1900.0 / 900.0 }
+}
 
-# =====================================================================
-# 2. FONCTIONS MATHÉMATIQUES (Cerveau)
-# =====================================================================
-def discretize_points(key_points, max_segment_length=5.0): # 5 pixels de précision max
+for name, cfg in TABLE_CONFIGS.items():
+    if not cfg["is_round"]:
+        A = cfg["aspect"]
+        cfg["ymax"] = 1.0 / math.sqrt(A**2 + 1)
+        cfg["xmax"] = A * cfg["ymax"]
+    else:
+        cfg["ymax"] = 1.0
+        cfg["xmax"] = 1.0
+
+# --- 2. FONCTIONS MATHS ET ROUTAGE ---
+def discretize_points(key_points, max_segment_length=0.015):
     if not key_points or len(key_points) < 2: return key_points
     smooth_path = [key_points[0]]
     for i in range(len(key_points) - 1):
@@ -71,18 +80,24 @@ def discretize_points(key_points, max_segment_length=5.0): # 5 pixels de précis
             smooth_path.append(tuple(p1 + t * (p2 - p1)))
     return smooth_path
 
-def cart_to_sunae_angle(dx, dy, current_theta):
-    # dx, dy sont calculés par rapport au centre absolu. 
-    # Y positif = vers le haut de la table (comme un plan mathématique classique)
-    theta_rad = math.atan2(dx, dy) # Atan2(X, Y) place le 0 degrés en HAUT, et tourne dans le sens horaire
+def cart_to_sunae_angle(x, y, current_theta):
+    theta_rad = math.atan2(x, y) 
     delta = (theta_rad - current_theta) % (2 * math.pi)
     if delta > math.pi: delta -= 2 * math.pi
     elif delta < -math.pi: delta += 2 * math.pi
     return current_theta + delta
 
-# =====================================================================
-# 3. LE MOTEUR DU SERVEUR FLASK
-# =====================================================================
+def generate_arc_polar(theta_start, theta_end, steps=40):
+    delta = (theta_end - theta_start) % (2 * math.pi)
+    if delta > math.pi: delta -= 2 * math.pi
+    elif delta < -math.pi: delta += 2 * math.pi
+    pts = []
+    for i in range(1, steps + 1):
+        t = theta_start + delta * (i / steps)
+        pts.append((t, 1.0))
+    return pts, theta_start + delta
+
+# --- 3. SERVEUR FLASK ---
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -92,125 +107,165 @@ def export_thr():
     data = request.json
     table_type = data.get('table')
     module_name = data.get('module')
-    objects = data.get('drawing', {}).get('objects', [])
-
-    # --- Configuration selon la table choisie ---
-    if table_type == "Origin S":
-        w, h = 600, 600
-    elif table_type == "Dimension S":
-        w, h = 700, 350
-    elif table_type == "Dimension L":
-        w, h = 800, 400
-    else:
-        w, h = 600, 600
-
-    center_x = w / 2.0
-    center_y = h / 2.0
-    max_radius = min(w, h) / 2.0
-
-    all_pixel_points = []
-
-    # --- LECTURE ET TRANSFORMATION DE TOUS LES OBJETS DE L'ÉCRAN ---
-    for obj in objects:
-        
-        # 1. SI C'EST DU TEXTE SUNAE
-        if obj.get('isSunaeText'):
-            text = obj.get('text', '').upper()
-            left = obj.get('left', center_x)
-            top = obj.get('top', center_y)
-            scaleX = obj.get('scaleX', 1.0)
-            angle = obj.get('angle', 0.0)
-
-            # Dimensions de base d'une lettre à l'écran (pour correspondre visuellement à FabricJS)
-            char_w_base = 30 * scaleX
-            char_h_base = 40 * scaleX
-            spacing = 10 * scaleX
-
-            total_width = (len(text) * char_w_base) + max(0, len(text) - 1) * spacing
-            start_x = -total_width / 2.0 # Décalage pour centrer le mot sur le point d'origine
-            
-            angle_rad = math.radians(angle)
-            text_points = []
-            
-            for c_idx, char in enumerate(text):
-                # Récupération de la lettre dans le dictionnaire
-                model = SUNAE_FONT.get(char, SUNAE_FONT.get(' ', []))
-                char_offset_x = start_x + c_idx * (char_w_base + spacing)
-                
-                char_pixels = []
-                for nx, ny in model:
-                    # nx, ny sont entre 0 et 1. On les met à l'échelle.
-                    px = char_offset_x + (nx * char_w_base)
-                    py = -char_h_base/2.0 + (ny * char_h_base)
-                    
-                    # Application de la matrice de rotation
-                    rx = px * math.cos(angle_rad) - py * math.sin(angle_rad)
-                    ry = px * math.sin(angle_rad) + py * math.cos(angle_rad)
-                    
-                    # Translation vers la position finale
-                    abs_x = rx + left
-                    abs_y = ry + top
-                    char_pixels.append((abs_x, abs_y))
-                
-                if char_pixels:
-                    discrete_char = discretize_points(char_pixels)
-                    
-                    # Création d'une ligne de voyage (liaison) entre la lettre précédente et celle-ci
-                    if text_points:
-                        travel = discretize_points([text_points[-1], discrete_char[0]])
-                        text_points.extend(travel[1:])
-                        
-                    text_points.extend(discrete_char)
-
-            all_pixel_points.extend(text_points)
-
-        # 2. SI C'EST UN TRAIT LIBRE OU UNE LIGNE ROUGE
-        elif obj.get('isUserStroke') or obj.get('isTravelLine'):
-            
-            if obj.get('type') == 'path':
-                path_pts = []
-                for cmd in obj.get('path', []):
-                    if len(cmd) >= 3:
-                        path_pts.append((cmd[-2], cmd[-1])) # Récupère le X, Y absolu de la commande SVG
-                if path_pts:
-                    all_pixel_points.extend(discretize_points(path_pts))
-            
-            elif obj.get('type') == 'line':
-                # Les lignes droites et rouges ont directement leurs extrémités définies
-                x1, y1 = obj.get('x1'), obj.get('y1')
-                x2, y2 = obj.get('x2'), obj.get('y2')
-                all_pixel_points.extend(discretize_points([(x1, y1), (x2, y2)]))
-
-    # --- NETTOYAGE (Enlever les doublons exacts si deux traits se touchent) ---
-    clean_points = []
-    for p in all_pixel_points:
-        if not clean_points or clean_points[-1] != p:
-            clean_points.append(p)
-
-    # --- 4. CONVERSION ABSOLUE EN THETA / RHO ---
-    thr_lines = []
-    current_theta = 0.0
-
-    for px, py in clean_points:
-        dx = px - center_x
-        dy = center_y - py  # INVERSION Y : Sur l'écran Y descend, sur la table Y monte
-        
-        # Calcul du rayon (Rho)
-        rho = math.hypot(dx, dy) / max_radius
-        if rho > 1.0: rho = 1.0 # Mur de sécurité absolu
-        
-        # Calcul de l'angle continu (Theta)
-        current_theta = cart_to_sunae_angle(dx, dy, current_theta)
-        
-        thr_lines.append(f"{current_theta:.5f} {rho:.5f}\n")
-
-    # --- SÉCURITÉ : Si l'utilisateur n'a rien dessiné ---
-    if not thr_lines:
-        thr_lines.append("0.00000 0.00000\n")
-
-    # --- 5. GÉNÉRATION DU FICHIER TÉLÉCHARGEABLE ---
-    file_content = "".join(thr_lines)
     
+    cfg = TABLE_CONFIGS.get(table_type)
+    if not cfg: return jsonify({"error": "Table inconnue"}), 400
+
+    raw_points = []
+    cumulative_theta = 0.0
+
+    # ==============================================================
+    # MODULE TEXTE AUTOMATIQUE : TA FONCTION GENERATE() EXACTE
+    # ==============================================================
+    if module_name == "Texte Automatique":
+        text_lines = data.get('text_lines', [])
+        alphabet = get_custom_alphabet()
+        char_width, char_height, spacing = cfg["w"], cfg["h"], cfg["spacing"]
+        slot_width = char_width + spacing
+        
+        # 1. Point de départ
+        if cfg["is_round"]: 
+            raw_points.append((cumulative_theta, 1.0))
+        else:
+            start_x, start_y = -cfg["xmax"], cfg["ymax"]
+            cumulative_theta = cart_to_sunae_angle(start_x, start_y, 0.0)
+            raw_points.append((cumulative_theta, math.hypot(start_x, start_y)))
+        
+        # 2. Remplissage des lignes
+        for r_idx, line in enumerate(text_lines):
+            y_center = cfg["y_centers"][r_idx]
+            y_base = y_center - (char_height / 2.0)
+            
+            chars_count = len(line)
+            total_text_width = (chars_count * slot_width) - spacing
+            text_x_start = -(total_text_width / 2.0)
+            
+            # 2.1 Périmètre
+            if cfg["is_round"]:
+                x_left = -math.sqrt(1 - y_base**2)
+                x_right = math.sqrt(1 - y_base**2)
+                target_theta_left = cart_to_sunae_angle(x_left, y_base, cumulative_theta)
+                arc_pts, cumulative_theta = generate_arc_polar(cumulative_theta, target_theta_left, steps=30)
+                raw_points.extend(arc_pts)
+            else:
+                x_left = -cfg["xmax"]
+                x_right = cfg["xmax"]
+                if r_idx == 0:
+                    edge_path = discretize_points([(-cfg["xmax"], cfg["ymax"]), (-cfg["xmax"], y_base)])
+                else:
+                    prev_y_base = cfg["y_centers"][r_idx-1] - (char_height / 2.0)
+                    edge_path = discretize_points([(cfg["xmax"], prev_y_base), (cfg["xmax"], -cfg["ymax"]), (-cfg["xmax"], -cfg["ymax"]), (-cfg["xmax"], y_base)])
+                for cx, cy in edge_path:
+                    cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                    raw_points.append((cumulative_theta, math.hypot(cx, cy)))
+            
+            # Ligne vide (Espaces)
+            if not line.strip():
+                if cfg["is_round"]:
+                    target_theta_right = cart_to_sunae_angle(x_right, y_base, cumulative_theta)
+                    arc_pts, cumulative_theta = generate_arc_polar(cumulative_theta, target_theta_right, steps=40)
+                    raw_points.extend(arc_pts)
+                else:
+                    edge_path = discretize_points([(-cfg["xmax"], y_base), (cfg["xmax"], y_base)])
+                    for cx, cy in edge_path:
+                        cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                        raw_points.append((cumulative_theta, math.hypot(cx, cy)))
+                continue 
+            
+            # 2.2 Entrée dans la ligne
+            entry_line = discretize_points([(x_left, y_base), (text_x_start, y_base)])
+            for cx, cy in entry_line:
+                cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                rho = min(math.hypot(cx, cy), 1.0) if cfg["is_round"] else math.hypot(cx, cy)
+                raw_points.append((cumulative_theta, rho))
+                
+            # 2.3 Écriture des lettres
+            for c_idx, char in enumerate(line):
+                model = alphabet.get(char, alphabet[' '])
+                smooth_model = discretize_points(model) 
+                char_x_offset = text_x_start + (c_idx * slot_width)
+                
+                for px, py in smooth_model:
+                    cx = char_x_offset + (px * char_width)
+                    cy = y_base + (py * char_height)
+                    cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                    rho = min(math.hypot(cx, cy), 1.0) if cfg["is_round"] else math.hypot(cx, cy)
+                    raw_points.append((cumulative_theta, rho))
+                
+                # Liaison entre lettres
+                if c_idx < len(line) - 1:
+                    end_cx = char_x_offset + char_width
+                    start_next_cx = text_x_start + ((c_idx + 1) * slot_width)
+                    liaison = discretize_points([(end_cx, y_base), (start_next_cx, y_base)])
+                    for cx, cy in liaison:
+                        cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                        rho = min(math.hypot(cx, cy), 1.0) if cfg["is_round"] else math.hypot(cx, cy)
+                        raw_points.append((cumulative_theta, rho))
+                        
+            # 2.4 Sortie de la ligne
+            text_x_end = text_x_start + ((len(line) - 1) * slot_width) + char_width
+            exit_line = discretize_points([(text_x_end, y_base), (x_right, y_base)])
+            for cx, cy in exit_line:
+                cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                rho = min(math.hypot(cx, cy), 1.0) if cfg["is_round"] else math.hypot(cx, cy)
+                raw_points.append((cumulative_theta, rho))
+
+        # 3. Fin du tracé
+        if cfg["is_round"]:
+            target_theta_bottom = cart_to_sunae_angle(0, -1, cumulative_theta)
+            arc_pts, cumulative_theta = generate_arc_polar(cumulative_theta, target_theta_bottom, steps=20)
+            raw_points.extend(arc_pts)
+        else:
+            last_y_base = cfg["y_centers"][-1] - (char_height / 2.0)
+            edge_path = discretize_points([(cfg["xmax"], last_y_base), (cfg["xmax"], -cfg["ymax"])])
+            for cx, cy in edge_path:
+                cumulative_theta = cart_to_sunae_angle(cx, cy, cumulative_theta)
+                raw_points.append((cumulative_theta, math.hypot(cx, cy)))
+
+    # ==============================================================
+    # MODULE DESSIN LIBRE
+    # ==============================================================
+    elif module_name == "Dessin Libre":
+        objects = data.get('drawing', {}).get('objects', [])
+        # Récupère l'échelle du canevas pour convertir les pixels en coordonnées normées (-1 à 1)
+        w, h = 600, 600
+        if table_type == "Dimension S": w, h = 700, 350
+        elif table_type == "Dimension L": w, h = 800, 400
+        
+        center_x, center_y = w / 2.0, h / 2.0
+        max_radius = min(w, h) / 2.0
+
+        all_norm_points = []
+        for obj in objects:
+            if obj.get('isUserStroke') or obj.get('isTravelLine'):
+                if obj.get('type') == 'path':
+                    for cmd in obj.get('path', []):
+                        if len(cmd) >= 3:
+                            nx = (cmd[-2] - center_x) / max_radius
+                            ny = (center_y - cmd[-1]) / max_radius # Inversion Y écran vers maths
+                            all_norm_points.append((nx, ny))
+                elif obj.get('type') == 'line':
+                    n_x1 = (obj.get('x1') - center_x) / max_radius
+                    n_y1 = (center_y - obj.get('y1')) / max_radius
+                    n_x2 = (obj.get('x2') - center_x) / max_radius
+                    n_y2 = (center_y - obj.get('y2')) / max_radius
+                    all_norm_points.extend([(n_x1, n_y1), (n_x2, n_y2)])
+
+        # Conversion des points normés en Theta/Rho
+        clean_points = []
+        for p in all_norm_points:
+            if not clean_points or clean_points[-1] != p: clean_points.append(p)
+        
+        for nx, ny in clean_points:
+            rho = min(math.hypot(nx, ny), 1.0) if cfg["is_round"] else math.hypot(nx, ny)
+            cumulative_theta = cart_to_sunae_angle(nx, ny, cumulative_theta)
+            raw_points.append((cumulative_theta, rho))
+
+    if not raw_points:
+        raw_points.append((0.0, 0.0))
+
+    # Génération du fichier
+    file_content = "".join([f"{th:.5f} {rh:.5f}\n" for th, rh in raw_points])
     mem_file = io.BytesIO()
     mem_file.write(file_content.encode('utf-8'))
     mem_file.seek(0)
