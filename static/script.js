@@ -166,48 +166,19 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- GESTION DU DESSIN LIBRE (CORRECTION DU SAUT DE TRACÉ) ---
+    // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
-        let absPoints = []; 
 
-        // On calcule les points absolus (bloqués aux bords) SANS MODIFIER LE TRAIT VISUEL !
-        for (let i = 0; i < pathObj.path.length; i++) {
-            let cmd = pathObj.path[i];
-            if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let relX = cmd[1] - pathObj.pathOffset.x;
-                let relY = cmd[2] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y});
-            } else if (cmd[0] === 'Q') {
-                let crX = cmd[1] - pathObj.pathOffset.x;
-                let crY = cmd[2] - pathObj.pathOffset.y;
-                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
-                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
-                
-                let rX = cmd[3] - pathObj.pathOffset.x;
-                let rY = cmd[4] - pathObj.pathOffset.y;
-                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
-                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y}); 
-            }
-        }
-
+        // On assigne simplement le statut, on NE TOUCHE PLUS du tout au tracé pour ne pas le décaler.
         pathObj.set({
             selectable: false, 
             isUserStroke: true, 
-            createdAt: Date.now(),
-            sunaeAbsPoints: absPoints // Sauvegardé silencieusement pour le serveur
+            createdAt: Date.now()
         });
         
-        pathObj.absStartX = absPoints[0].x; 
-        pathObj.absStartY = absPoints[0].y;
-        pathObj.absEndX = absPoints[absPoints.length - 1].x; 
-        pathObj.absEndY = absPoints[absPoints.length - 1].y;
-
         updateTravelLines();
     });
 
@@ -251,21 +222,38 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ---
+// --- LECTURE ABSOLUE ET PRÉCISE POUR LE TRAIT ROUGE ---
+function getStrokePoint(cmd) {
+    if (cmd[0] === 'Q') return { x: cmd[3], y: cmd[4] };
+    return { x: cmd[1], y: cmd[2] };
+}
+
 function getStrokeStart(stroke) {
-    if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
-    else return { 
-        x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, 
-        y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 
-    };
+    let x, y;
+    if (stroke.type === 'path') {
+        let offsetX = stroke.left - stroke.pathOffset.x;
+        let offsetY = stroke.top - stroke.pathOffset.y;
+        let pt = getStrokePoint(stroke.path[0]);
+        x = pt.x + offsetX;
+        y = pt.y + offsetY;
+    } else {
+        x = stroke.x1; y = stroke.y1;
+    }
+    return sanitizeCoordinates(x, y, isRound, canvas.width, canvas.height);
 }
 
 function getStrokeEnd(stroke) {
-    if (stroke.type === 'path') return { x: stroke.absEndX, y: stroke.absEndY };
-    else return { 
-        x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, 
-        y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 
-    };
+    let x, y;
+    if (stroke.type === 'path') {
+        let offsetX = stroke.left - stroke.pathOffset.x;
+        let offsetY = stroke.top - stroke.pathOffset.y;
+        let pt = getStrokePoint(stroke.path[stroke.path.length - 1]);
+        x = pt.x + offsetX;
+        y = pt.y + offsetY;
+    } else {
+        x = stroke.x2; y = stroke.y2;
+    }
+    return sanitizeCoordinates(x, y, isRound, canvas.width, canvas.height);
 }
 
 // --- 3. LOGIQUE DES LIGNES ROUGES ---
@@ -495,7 +483,7 @@ window.exportTHR = function() {
         document.getElementById('bille-slider').value = 100;
         document.getElementById('bille-slider').dispatchEvent(new Event('input'));
         
-        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
+        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt']);
     }
 
     fetch('/export-thr', {
