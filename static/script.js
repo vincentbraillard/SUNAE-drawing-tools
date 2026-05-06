@@ -1,6 +1,7 @@
 // --- VARIABLES GLOBALES ---
 let canvas = null;
 let currentTable = null;
+let currentModule = null;
 let isRound = false;
 let drawMode = 'freedraw'; 
 
@@ -8,29 +9,20 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 
-// --- FONCTION DE SÉCURITÉ DES BORDURES (Pour le .THR et le visuel) ---
+// --- FONCTION DE SÉCURITÉ DES BORDURES ---
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2;
         const cy = h / 2;
-        const radius = (w / 2) - 2; // Marge de 2px pour garder la bille dans le sable
+        const radius = (w / 2) - 2; 
         const dx = x - cx;
         const dy = y - cy;
         const dist = Math.hypot(dx, dy);
-        
-        if (dist > radius) {
-            return {
-                x: cx + (radius * dx / dist),
-                y: cy + (radius * dy / dist)
-            };
-        }
+        if (dist > radius) return { x: cx + (radius * dx / dist), y: cy + (radius * dy / dist) };
         return { x, y };
     } else {
         const margin = 2;
-        return {
-            x: Math.max(margin, Math.min(w - margin, x)),
-            y: Math.max(margin, Math.min(h - margin, y))
-        };
+        return { x: Math.max(margin, Math.min(w - margin, x)), y: Math.max(margin, Math.min(h - margin, y)) };
     }
 }
 
@@ -40,11 +32,24 @@ function goToStep(step, moduleName = null) {
     document.getElementById('step-' + step).classList.add('active');
     
     if (moduleName) {
-        document.getElementById('workspace-title').innerText = moduleName + " | " + currentTable;
-        if (moduleName === 'Dessin Libre') {
-            document.getElementById('module-dessin-libre').style.display = 'block';
+        currentModule = moduleName;
+        document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
+        document.getElementById('module-workspace').style.display = 'block';
+
+        if (currentModule === 'Texte Automatique') {
+            document.getElementById('tools-dessin').style.display = 'none';
+            document.getElementById('tools-texte').style.display = 'block';
+            if (canvas) {
+                canvas.isDrawingMode = false;
+                canvas.selection = true;
+            }
         } else {
-            document.getElementById('module-dessin-libre').style.display = 'none';
+            document.getElementById('tools-dessin').style.display = 'block';
+            document.getElementById('tools-texte').style.display = 'none';
+            if (canvas) {
+                canvas.isDrawingMode = (drawMode === 'freedraw');
+                canvas.selection = false;
+            }
         }
     }
 }
@@ -54,12 +59,9 @@ function setupWorkspace(tableName, round, w, h) {
     currentTable = tableName;
     isRound = round;
     
-    document.getElementById('workspace-title').innerText = "Dessin Libre | " + currentTable;
-    goToStep(3);
+    goToStep(3, currentModule || 'Dessin Libre');
 
-    if (canvas) {
-        canvas.dispose();
-    }
+    if (canvas) canvas.dispose();
 
     const container = document.getElementById('canvas-container');
     container.style.width = w + 'px';
@@ -70,122 +72,121 @@ function setupWorkspace(tableName, round, w, h) {
     canvas = new fabric.Canvas('sunae-canvas', {
         width: w,
         height: h,
-        isDrawingMode: true,
-        selection: false
+        isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'),
+        selection: (currentModule === 'Texte Automatique')
     });
 
     if (isRound) {
-        canvas.clipPath = new fabric.Circle({
-            radius: w / 2,
-            originX: 'center', originY: 'center',
-            left: w / 2, top: h / 2
-        });
+        canvas.clipPath = new fabric.Circle({ radius: w / 2, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
     } else {
-        canvas.clipPath = new fabric.Rect({
-            width: w, height: h,
-            rx: 20, ry: 20,
-            originX: 'center', originY: 'center',
-            left: w / 2, top: h / 2
-        });
+        canvas.clipPath = new fabric.Rect({ width: w, height: h, rx: 20, ry: 20, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
     }
 
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // INTERCEPTION DU TRAIT LIBRE : On le force dans les limites absolues
+    // --- GESTION DU TEXTE ---
+    window.addText = function() {
+        const textVal = document.getElementById('text-input').value;
+        if (!textVal) return;
+
+        const textObj = new fabric.IText(textVal, {
+            left: canvas.width / 2,
+            top: canvas.height / 2,
+            fontFamily: 'Courier', 
+            fill: '#2980b9', 
+            originX: 'center',
+            originY: 'center',
+            selectable: true,
+            isUserStroke: false, 
+            isSunaeText: true, // Marqueur pour le backend Python
+            createdAt: Date.now() 
+        });
+
+        canvas.add(textObj);
+        canvas.setActiveObject(textObj);
+        canvas.renderAll();
+    };
+
+    window.deleteSelected = function() {
+        const activeObj = canvas.getActiveObject();
+        if (activeObj) {
+            canvas.remove(activeObj);
+            updateTravelLines();
+        }
+    };
+
+    canvas.on('object:modified', function() {
+        updateTravelLines();
+    });
+
+    // --- GESTION DU DESSIN LIBRE ---
     canvas.on('path:created', function(e) {
         let pathObj = e.path;
         let absolutePathArr = [];
-        
-        // Fabric.js utilise des coordonnées relatives. On les repasse en absolu pour le calcul.
         let offsetX = pathObj.left - pathObj.pathOffset.x;
         let offsetY = pathObj.top - pathObj.pathOffset.y;
 
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             let newCmd = [...cmd];
-            
             if (cmd[0] === 'M' || cmd[0] === 'L') {
                 let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
-                newCmd[1] = p.x;
-                newCmd[2] = p.y;
+                newCmd[1] = p.x; newCmd[2] = p.y;
             } else if (cmd[0] === 'Q') {
                 let cp = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
                 let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
-                newCmd[1] = cp.x;
-                newCmd[2] = cp.y;
-                newCmd[3] = p.x;
-                newCmd[4] = p.y;
+                newCmd[1] = cp.x; newCmd[2] = cp.y; newCmd[3] = p.x; newCmd[4] = p.y;
             }
             absolutePathArr.push(newCmd);
         }
 
         canvas.remove(pathObj);
-        
-        // On recrée le trait parfait
         let clampedPath = new fabric.Path(absolutePathArr, {
-            fill: null,
-            stroke: '#2980b9',
-            strokeWidth: 3,
-            strokeLineCap: 'round',
-            strokeLineJoin: 'round',
-            selectable: false,
-            evented: false,
-            isUserStroke: true
+            fill: null, stroke: '#2980b9', strokeWidth: 3, strokeLineCap: 'round', strokeLineJoin: 'round',
+            selectable: false, isUserStroke: true, createdAt: Date.now()
         });
         
-        // On sauvegarde explicitement le début et la fin pour la ligne rouge
-        clampedPath.absStartX = absolutePathArr[0][1];
-        clampedPath.absStartY = absolutePathArr[0][2];
-        
+        clampedPath.absStartX = absolutePathArr[0][1]; clampedPath.absStartY = absolutePathArr[0][2];
         let lastCmd = absolutePathArr[absolutePathArr.length - 1];
-        clampedPath.absEndX = lastCmd[lastCmd.length - 2];
-        clampedPath.absEndY = lastCmd[lastCmd.length - 1];
+        clampedPath.absEndX = lastCmd[lastCmd.length - 2]; clampedPath.absEndY = lastCmd[lastCmd.length - 1];
 
         canvas.add(clampedPath);
         updateTravelLines();
     });
 
     canvas.on('mouse:down', function(o) {
-        if (drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
+        if (currentModule !== 'Dessin Libre' || drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
         isDrawingLine = true;
         var pointer = canvas.getPointer(o.e);
-        
         let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
-        var points = [p.x, p.y, p.x, p.y];
-        
-        tempLine = new fabric.Line(points, {
-            strokeWidth: 3,
-            fill: '#2980b9',
-            stroke: '#2980b9',
-            selectable: false,
-            evented: false,
-            isUserStroke: true
+        tempLine = new fabric.Line([p.x, p.y, p.x, p.y], {
+            strokeWidth: 3, fill: '#2980b9', stroke: '#2980b9', originX: 'center', originY: 'center',
+            selectable: false, evented: false, isUserStroke: true, createdAt: Date.now()
         });
         canvas.add(tempLine);
     });
 
     canvas.on('mouse:move', function(o) {
-        if (!isDrawingLine || drawMode !== 'line') return;
+        if (!isDrawingLine) return;
         var pointer = canvas.getPointer(o.e);
-        
         let p = sanitizeCoordinates(pointer.x, pointer.y, isRound, canvas.width, canvas.height);
         tempLine.set({ x2: p.x, y2: p.y });
         canvas.renderAll();
     });
 
-    canvas.on('mouse:up', function(o) {
-        if (drawMode !== 'line') return;
+    canvas.on('mouse:up', function() {
+        if (!isDrawingLine) return;
         isDrawingLine = false;
-        if (tempLine) {
-            updateTravelLines();
-        }
+        if (tempLine) updateTravelLines();
     });
 
     document.querySelectorAll('input[name="drawMode"]').forEach(radio => {
         radio.addEventListener('change', function() {
             drawMode = this.value;
-            canvas.isDrawingMode = (drawMode === 'freedraw' && document.getElementById('bille-slider').value == 100);
+            if(currentModule === 'Dessin Libre') {
+                canvas.isDrawingMode = (drawMode === 'freedraw' && document.getElementById('bille-slider').value == 100);
+            }
         });
     });
 
@@ -193,75 +194,55 @@ function setupWorkspace(tableName, round, w, h) {
     setupSimulator();
 }
 
-// --- FONCTIONS MATHÉMATIQUES ABSOLUES ---
+// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
-    if (stroke.type === 'path') {
-        return { x: stroke.absStartX, y: stroke.absStartY };
-    } else {
-        return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, 
-                 y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
-    }
+    if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
+    else if (stroke.type === 'line') return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+    else return stroke.getCenterPoint();
 }
 
 function getStrokeEnd(stroke) {
-    if (stroke.type === 'path') {
-        return { x: stroke.absEndX, y: stroke.absEndY };
-    } else {
-        return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, 
-                 y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
-    }
+    if (stroke.type === 'path') return { x: stroke.absEndX, y: stroke.absEndY };
+    else if (stroke.type === 'line') return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+    else return stroke.getCenterPoint();
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES DE VOYAGE ---
+// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
-    const objects = canvas.getObjects();
-    const travelLines = objects.filter(o => o.isTravelLine);
-    travelLines.forEach(line => canvas.remove(line));
+    canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
-    const userStrokes = canvas.getObjects().filter(o => o.isUserStroke);
+    const userStrokes = canvas.getObjects()
+        .filter(o => o.isUserStroke)
+        .sort((a, b) => a.createdAt - b.createdAt);
     
     for (let i = 1; i < userStrokes.length; i++) {
-        const prevStroke = userStrokes[i - 1];
-        const currStroke = userStrokes[i];
-        
-        const prevEnd = getStrokeEnd(prevStroke);
-        const currStart = getStrokeStart(currStroke);
+        const prevEnd = getStrokeEnd(userStrokes[i - 1]);
+        const currStart = getStrokeStart(userStrokes[i]);
 
         if (prevEnd && currStart) {
             const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
-                stroke: 'red',
-                strokeWidth: 2,
-                strokeDashArray: [5, 5],
-                opacity: 0.7,
-                selectable: false,
-                evented: false,
-                isTravelLine: true,
-                travelIndex: i - 1
+                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
+                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1
             });
             canvas.add(redLine);
             redLine.sendToBack();
         }
     }
-    
     if (bgImageObj) bgImageObj.sendToBack();
     canvas.renderAll();
 }
 
 // --- 4. ACTIONS: UNDO ET RESET ---
-function undoStroke() {
-    const strokes = canvas.getObjects().filter(o => o.isUserStroke);
+window.undoStroke = function() {
+    const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     if (strokes.length > 0) {
-        const lastStroke = strokes[strokes.length - 1];
-        canvas.remove(lastStroke);
+        canvas.remove(strokes[strokes.length - 1]);
         updateTravelLines();
     }
 }
 
-function resetCanvas() {
-    const objects = canvas.getObjects();
-    objects.forEach(o => {
-        if (!o.isBackgroundImage) canvas.remove(o);
-    });
+window.resetCanvas = function() {
+    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage) canvas.remove(o); });
     canvas.renderAll();
 }
 
@@ -275,50 +256,28 @@ function setupBackgroundControls() {
 
     function updateBgImage() {
         if (!bgImageObj) return;
-        
         const scale = parseFloat(scaleSlider.value);
         const angle = parseInt(angleSlider.value);
         const panX = parseInt(panXSlider.value);
         const panY = parseInt(panYSlider.value);
-
         document.getElementById('val-scale').innerText = scale.toFixed(2);
         document.getElementById('val-angle').innerText = angle;
         document.getElementById('val-pan-x').innerText = panX;
         document.getElementById('val-pan-y').innerText = panY;
 
-        bgImageObj.set({
-            scaleX: scale,
-            scaleY: scale,
-            angle: angle,
-            left: (canvas.width / 2) + panX,
-            top: (canvas.height / 2) - panY
-        });
-        
+        bgImageObj.set({ scaleX: scale, scaleY: scale, angle: angle, left: (canvas.width / 2) + panX, top: (canvas.height / 2) - panY });
         canvas.renderAll();
     }
 
     uploadInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
-        
         const reader = new FileReader();
         reader.onload = function(f) {
-            const data = f.target.result;
-            fabric.Image.fromURL(data, function(img) {
+            fabric.Image.fromURL(f.target.result, function(img) {
                 if (bgImageObj) canvas.remove(bgImageObj);
-                
                 bgImageObj = img;
-                bgImageObj.set({
-                    originX: 'center',
-                    originY: 'center',
-                    left: canvas.width / 2,
-                    top: canvas.height / 2,
-                    opacity: 0.5,
-                    selectable: false,
-                    evented: false,
-                    isBackgroundImage: true
-                });
-                
+                bgImageObj.set({ originX: 'center', originY: 'center', left: canvas.width / 2, top: canvas.height / 2, opacity: 0.5, selectable: false, evented: false, isBackgroundImage: true });
                 canvas.add(bgImageObj);
                 bgImageObj.sendToBack();
                 updateBgImage();
@@ -336,21 +295,13 @@ function setupBackgroundControls() {
 // --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
-    
     let simOverlay = document.getElementById('sim-overlay');
     if (!simOverlay) {
         simOverlay = document.createElement('div');
         simOverlay.id = 'sim-overlay';
-        simOverlay.style.position = 'absolute';
-        simOverlay.style.top = '0';
-        simOverlay.style.left = '0';
-        simOverlay.style.width = '100%';
-        simOverlay.style.height = '100%';
-        simOverlay.style.pointerEvents = 'none';
-        
-        simOverlay.style.borderRadius = isRound ? '50%' : '20px';
-        simOverlay.style.overflow = 'hidden';
-        
+        simOverlay.style.position = 'absolute'; simOverlay.style.top = '0'; simOverlay.style.left = '0';
+        simOverlay.style.width = '100%'; simOverlay.style.height = '100%'; simOverlay.style.pointerEvents = 'none';
+        simOverlay.style.borderRadius = isRound ? '50%' : '20px'; simOverlay.style.overflow = 'hidden';
         document.getElementById('canvas-container').appendChild(simOverlay);
     }
     
@@ -358,18 +309,16 @@ function setupSimulator() {
         const percent = parseInt(this.value);
         simOverlay.innerHTML = '';
 
-        const strokes = canvas.getObjects().filter(o => o.isUserStroke);
-        const travels = canvas.getObjects()
-            .filter(o => o.isTravelLine)
-            .sort((a, b) => a.travelIndex - b.travelIndex);
+        const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
+        const travels = canvas.getObjects().filter(o => o.isTravelLine).sort((a, b) => a.travelIndex - b.travelIndex);
 
         if (percent === 100) {
-            canvas.isDrawingMode = (drawMode === 'freedraw');
+            if(currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
             canvas.getObjects().forEach(o => {
-                if (o.isUserStroke || o.isTravelLine) {
+                if (o.isUserStroke || o.isTravelLine || o.isSunaeText) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
                     if (o.type === 'path' && o.origPath) o.set({ path: o.origPath });
-                    if (o.type === 'line' && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
+                    if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
                 }
             });
             canvas.renderAll();
@@ -388,77 +337,57 @@ function setupSimulator() {
         }
 
         let totalLength = 0;
-
         allSegments.forEach(seg => {
             if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
             if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
-                seg.origX1 = seg.x1; seg.origY1 = seg.y1;
-                seg.origX2 = seg.x2; seg.origY2 = seg.y2;
+                seg.origX1 = seg.x1; seg.origY1 = seg.y1; seg.origX2 = seg.x2; seg.origY2 = seg.y2;
             }
 
-            if (seg.type === 'path') {
-                seg.segmentLength = seg.origPath.length;
-            } else if (seg.type === 'line' || seg.isTravelLine) {
-                const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
-                const sy = seg.origY1 !== undefined ? seg.origY1 : seg.y1;
-                const ex = seg.origX2 !== undefined ? seg.origX2 : seg.x2;
-                const ey = seg.origY2 !== undefined ? seg.origY2 : seg.y2;
-                const dist = Math.hypot(ex - sx, ey - sy);
-                seg.segmentLength = Math.max(1, dist / 4);
+            if (seg.type === 'path') seg.segmentLength = seg.origPath.length;
+            else if (seg.type === 'line' || seg.isTravelLine) {
+                seg.segmentLength = Math.max(1, Math.hypot(seg.origX2 - seg.origX1, seg.origY2 - seg.origY1) / 4);
             }
             totalLength += seg.segmentLength;
         });
 
         if (totalLength === 0) return;
-
         const targetLength = (percent / 100) * totalLength;
         let currentLength = 0;
         let currentDotPos = null;
         let startDotPos = null;
 
         allSegments.forEach((seg, index) => {
-            if (index === 0) {
-                 startDotPos = getStrokeStart(seg);
-            }
+            if (index === 0) startDotPos = getStrokeStart(seg);
 
             if (currentLength + seg.segmentLength <= targetLength) {
                 seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 if (seg.type === 'path') seg.set({ path: seg.origPath });
                 if (seg.type === 'line' || seg.isTravelLine) seg.set({ x2: seg.origX2, y2: seg.origY2 });
-
                 currentDotPos = getStrokeEnd(seg);
                 currentLength += seg.segmentLength;
             }
             else if (currentLength < targetLength) {
-                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
                 const remainingLength = targetLength - currentLength;
                 const ratio = remainingLength / seg.segmentLength;
 
                 if (seg.type === 'path') {
+                    seg.set({ opacity: 1 });
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
 
                     const lastCmd = currentPath[cmdsToShow - 1];
-                    if (lastCmd && lastCmd.length >= 3) {
-                        currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
-                    } else {
-                        currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
-                    }
+                    if (lastCmd && lastCmd.length >= 3) currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
+                    else currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
                     
                     const offsetX = seg.left - seg.pathOffset.x;
                     const offsetY = seg.top - seg.pathOffset.y;
                     currentDotPos = { x: currentDotPos.x + offsetX, y: currentDotPos.y + offsetY };
                     
                 } else if (seg.type === 'line' || seg.isTravelLine) {
-                    const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
-                    const sy = seg.origY1 !== undefined ? seg.origY1 : seg.y1;
-                    const ex = seg.origX2 !== undefined ? seg.origX2 : seg.x2;
-                    const ey = seg.origY2 !== undefined ? seg.origY2 : seg.y2;
-
-                    const newX = sx + (ex - sx) * ratio;
-                    const newY = sy + (ey - sy) * ratio;
-
+                    seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
+                    const newX = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
+                    const newY = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
                     seg.set({ x2: newX, y2: newY });
                     currentDotPos = {x: newX, y: newY};
                 }
@@ -470,12 +399,8 @@ function setupSimulator() {
         });
 
         let svgDots = '';
-        if (targetLength > 0 && startDotPos) {
-             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
-        }
-        if (currentDotPos) {
-             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
-        }
+        if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
+        if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         simOverlay.innerHTML = svgDots;
 
         canvas.renderAll();
@@ -483,7 +408,7 @@ function setupSimulator() {
 }
 
 // --- 7. EXPORTATION VERS FLASK ---
-function exportTHR() {
+window.exportTHR = function() {
     if (!canvas) return;
 
     document.getElementById('bille-slider').value = 100;
@@ -491,7 +416,9 @@ function exportTHR() {
 
     const exportData = {
         table: currentTable,
-        drawing: canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage'])
+        module: currentModule,
+        // On s'assure d'exporter aussi les textes (isSunaeText)
+        drawing: canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'isSunaeText'])
     };
 
     fetch('/export-thr', {
@@ -500,9 +427,7 @@ function exportTHR() {
         body: JSON.stringify(exportData)
     })
     .then(response => response.json())
-    .then(data => {
-        alert(data.message);
-    })
+    .then(data => alert(data.message))
     .catch(error => {
         console.error('Erreur:', error);
         alert("Erreur lors de la communication avec le serveur.");
