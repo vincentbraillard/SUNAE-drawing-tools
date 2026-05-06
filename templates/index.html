@@ -133,7 +133,12 @@
                     </div>
 
                     <br>
-                    <button class="primary-btn" onclick="exportTHR()">💾 EXPORTER (.THR)</button>
+                    <!-- NOUVEAU CHAMP NOM DU FICHIER ICI -->
+                    <div class="control-group" style="margin-bottom: 5px;">
+                        <label for="export-filename" style="color: var(--accent-gold); font-weight: bold; font-size: 0.9rem;">Nom du fichier :</label>
+                        <input type="text" id="export-filename" placeholder="Sunae_Export" style="border: 1px solid #555; background: #0e1117; color: white; padding: 10px; border-radius: 5px; width: 100%; box-sizing: border-box;">
+                    </div>
+                    <button class="primary-btn" onclick="exportTHR()" style="margin-top: 5px;">💾 EXPORTER (.THR)</button>
                 </div>
 
                 <div class="canvas-panel">
