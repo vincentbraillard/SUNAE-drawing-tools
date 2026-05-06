@@ -18,7 +18,7 @@ body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
     padding: 20px;
-    overflow-x: hidden;
+    overflow-x: hidden; /* Empêche le défilement horizontal */
 }
 
 hr {
@@ -62,17 +62,17 @@ button {
 }
 button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .back-button { margin-bottom: 20px; font-size: 0.9rem; padding: 5px 15px; }
-.primary-btn { background-color: #ff4b4b; border: none; color: white; width: 100%; padding: 12px; font-weight: bold; margin-top: 20px; }
+.primary-btn { background-color: #ff4b4b; border: none; color: white; width: 100%; padding: 12px; font-weight: bold; margin-top: 20px; border-radius: 6px;}
 .primary-btn:hover { background-color: #ff3333; color: white; }
 .upload-btn {
-    display: inline-block; background-color: transparent; border: 1px solid #555; color: var(--text-main);
-    border-radius: 6px; padding: 8px 15px; cursor: pointer; font-size: 0.9rem; margin-bottom: 15px; text-align: center;
+    display: block; background-color: transparent; border: 1px solid #555; color: var(--text-main);
+    border-radius: 6px; padding: 10px; cursor: pointer; font-size: 0.9rem; margin-bottom: 15px; text-align: center;
 }
 .upload-btn:hover { background-color: #333; }
 
 /* --- Espace de travail --- */
-.workspace-header { display: flex; align-items: center; }
-.workspace-title { margin: 0 auto; font-size: 1.5rem; }
+.workspace-header { display: flex; align-items: center; justify-content: space-between;}
+.workspace-title { font-size: 1.5rem; text-align: right;}
 
 /* UTILISATION DE FLEXBOX POUR PERMETTRE LE REPLI SUR MOBILE */
 .workspace-grid { 
@@ -89,18 +89,22 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .tools-panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-card); padding-bottom: 10px; }
 .tool-group { margin-bottom: 20px; }
 .action-buttons { display: flex; gap: 10px; margin-bottom: 20px; }
-.action-buttons button { flex: 1; font-size: 0.8rem; padding: 5px; }
+.action-buttons button { flex: 1; font-size: 0.8rem; padding: 8px; border-radius: 4px; }
 .slider-group { margin-bottom: 15px; }
 .slider-group label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: var(--text-muted); }
 .slider-group input[type="range"] { width: 100%; }
 
 /* --- Le Canevas --- */
 #canvas-container {
-    background-color: var(--sand-color); border: 4px dashed #bdc3c7; position: relative; overflow: hidden;
+    background-color: var(--sand-color); 
+    border: 4px dashed #bdc3c7; 
+    position: relative; 
+    overflow: hidden; /* Empêche les éléments de dépasser du cadre */
+    /* La taille est fixée par le JS selon la table choisie */
 }
 
 /* --- Le Slider Chrome --- */
-.simulator-section { text-align: center; }
+.simulator-section { text-align: center; width: 100%; padding: 0 20px; box-sizing: border-box;}
 #bille-slider {
     -webkit-appearance: none; width: 100%; height: 8px; background: #d4c5b0; border-radius: 4px; outline: none; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4); margin-top: 15px;
 }
@@ -112,45 +116,75 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 
 /* --- Les cases de texte Sunae --- */
 .sunae-letter-box {
-    position: absolute; text-align: center; font-family: 'Courier New', Courier, monospace; font-weight: bold; font-size: 24px;
-    border: 1px solid rgba(127, 140, 141, 0.6); background: transparent; color: #2c3e50;
-    pointer-events: auto; box-sizing: border-box; text-transform: uppercase; transition: all 0.2s ease;
+    position: absolute; 
+    text-align: center; 
+    font-family: 'Courier New', Courier, monospace; 
+    font-weight: bold; 
+    font-size: 24px;
+    border: 1px solid rgba(127, 140, 141, 0.6); 
+    background: transparent; 
+    color: #2c3e50;
+    pointer-events: auto; 
+    box-sizing: border-box; 
+    text-transform: uppercase; 
+    transition: all 0.2s ease;
+    border-radius: 2px;
 }
 .sunae-letter-box:focus {
-    border: 2px solid #e74c3c; background: rgba(255, 255, 255, 0.6); outline: none; box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
+    border: 2px solid #e74c3c; 
+    background: rgba(255, 255, 255, 0.6); 
+    outline: none; 
+    box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
 }
 
 /* ========================================= */
 /* --- ADAPTATION MOBILE ET TABLETTE --- */
 /* ========================================= */
 @media (max-width: 950px) {
+    /* Le canevas passe au-dessus des outils */
     .workspace-grid {
-        flex-direction: column; /* Force le menu en dessous/au-dessus */
+        flex-direction: column; 
         align-items: center;
+        gap: 15px;
     }
     
     .tools-panel { 
-        order: 2; /* Place les outils SOUS le dessin */
+        order: 2; /* En bas */
         width: 100%; 
-        max-width: 400px;
+        max-width: 500px;
     }
     
     .canvas-panel { 
-        order: 1; /* Place le dessin EN HAUT */
+        order: 1; /* En haut */
         width: 100%; 
+        /* On permet le scroll horizontal du conteneur parent 
+           au lieu de redimensionner le canevas lui-même */
+        overflow-x: auto; 
+        padding-bottom: 20px; /* Espace pour la scrollbar */
+        justify-content: flex-start; /* Aligne le canevas au début de la zone de scroll */
     }
 
-    /* On réduit visuellement la taille du canevas pour qu'il rentre sur l'écran */
+    /* Option de redimensionnement visuel (Transform Scale) 
+       pour faire rentrer la table ronde sur l'écran */
     #canvas-container {
-        transform-origin: top center;
-        transform: scale(0.65);
-        margin-bottom: -210px; /* Compense l'espace vide laissé par le scale */
+        /* Transform origin en haut à gauche pour éviter les marges blanches bizarres */
+        transform-origin: top left;
     }
 }
 
-@media (max-width: 500px) {
+/* Si l'écran est vraiment très petit (smartphones) */
+@media (max-width: 650px) {
+    body { padding: 10px; }
+    .workspace-header { flex-direction: column; align-items: flex-start; gap: 10px;}
+    .workspace-title { text-align: left; margin: 0; font-size: 1.2rem;}
+    
+    /* Échelle calculée pour la table Origin S (600px -> ~320px) */
     #canvas-container {
         transform: scale(0.55);
+        /* On doit forcer la réduction de hauteur/largeur de l'élément PARENT 
+           pour ne pas avoir un énorme espace vide sous le canevas. 
+           (600px * 0.55 = 330px) */
         margin-bottom: -270px; 
+        margin-right: -270px;
     }
 }
