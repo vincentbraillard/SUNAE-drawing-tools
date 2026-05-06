@@ -99,3 +99,33 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .sunae-letter-box:focus {
     border: 2px solid #e74c3c; background: rgba(255, 255, 255, 0.6); outline: none; box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
 }
+/* --- ADAPTATION MOBILE & TABLETTE --- */
+@media (max-width: 1000px) {
+    /* La grille (Menu gauche / Dessin droite) passe l'un en dessous de l'autre */
+    .workspace-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    /* Le menu des outils passe EN DESSOUS du canevas pour laisser la place au dessin */
+    .tools-panel {
+        order: 2; /* 2 = En bas */
+    }
+
+    .canvas-panel {
+        order: 1; /* 1 = En haut */
+        width: 100%;
+        overflow-x: auto; /* Permet de scroller le canevas s'il dépasse de l'écran */
+        justify-content: flex-start; /* Aligne le canevas au début pour le scroll */
+        padding-bottom: 20px;
+    }
+
+    /* Redimensionnement des cartes de l'accueil */
+    .card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .card img.table-img {
+        width: 40%; /* Un peu plus petit sur mobile */
+    }
+}
