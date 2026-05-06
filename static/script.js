@@ -16,7 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MOTEUR DE GRAPHES (LE SECRET DE SANDIFY POUR REPASSER SUR LES TRAITS) ---
+// --- MIN-HEAP POUR DIJKSTRA (Ultra-rapide) ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -78,11 +78,9 @@ function sanitizeCoordinates(x, y, round, w, h) {
     }
 }
 
-// --- GESTION DE L'INTERFACE ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     document.getElementById('step-' + step).classList.add('active');
-    
     if (moduleName) {
         currentModule = moduleName;
         document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
@@ -127,7 +125,6 @@ function buildTextGrid() {
     const grid = document.getElementById('text-grid-container');
     const cfg = TABLE_CFG[currentTable];
     if (!cfg) return;
-
     const center_px = canvas.width / 2.0; const center_py = canvas.height / 2.0;
     let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
     const scale_px = (canvas.width / 2.0) / xmax;
@@ -137,7 +134,6 @@ function buildTextGrid() {
         for (let c = 0; c < cfg.rows[r]; c++) {
             let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
             let py = center_py - cfg.y_centers[r] * scale_px;
-
             let input = document.createElement('input');
             input.type = 'text'; input.maxLength = 1; input.className = 'sunae-letter-box';
             input.dataset.row = r; input.dataset.col = c;
@@ -158,13 +154,12 @@ function buildTextGrid() {
         }
     }
 }
-
 window.resetTextGrid = function() {
     document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP SANDIFY ---
+// --- MODULE SVG & L'ALGORITHME SANDIFY (EULERIAN PATH) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -198,33 +193,26 @@ window.optimizeSVG = async function() {
     const pText = document.getElementById('svg-progress-text');
 
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
-    
-    function updateProgress(pct, textMsg) {
-        pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)';
-    }
+    function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
+    // --- 1. LECTURE WYSIWYG ---
     updateProgress(0, 'Extraction des tracés (WYSIWYG)...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let rawStrokes = [];
     let objectsToProcess = currentSvgGroup._objects || [currentSvgGroup];
-
-    let groupMatrix = currentSvgGroup.calcTransformMatrix();
+    let groupMatrix = currentSvgGroup.calcTransformMatrix(); // Garde l'échelle et la position parfaites
 
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
         let objMat = fabric.util.multiplyTransformMatrices(groupMatrix, obj.calcTransformMatrix());
         
         if (obj.type === 'path') {
-            let subPaths = [];
-            let currentPathCmds = [];
+            let subPaths = []; let currentPathCmds = [];
             obj.path.forEach(cmd => {
                 if ((cmd[0] === 'M' || cmd[0] === 'm') && currentPathCmds.length > 0) {
-                    subPaths.push(currentPathCmds);
-                    currentPathCmds = [cmd];
-                } else {
-                    currentPathCmds.push(cmd);
-                }
+                    subPaths.push(currentPathCmds); currentPathCmds = [cmd];
+                } else currentPathCmds.push(cmd);
             });
             if(currentPathCmds.length > 0) subPaths.push(currentPathCmds);
 
@@ -235,20 +223,13 @@ window.optimizeSVG = async function() {
                 let len = pathEl.getTotalLength();
                 if(len > 1) {
                     let pts = [];
-                    let step = 2; 
-                    for(let l=0; l<=len; l+=step) {
+                    for(let l=0; l<=len; l+=2) {
                         let pt = pathEl.getPointAtLength(l);
                         let ptX = pt.x; let ptY = pt.y;
                         if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
                         let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                         pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
                     }
-                    let pt = pathEl.getPointAtLength(len);
-                    let ptX = pt.x; let ptY = pt.y;
-                    if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                    
                     if(pts.length > 1) rawStrokes.push(pts);
                 }
             }
@@ -273,106 +254,175 @@ window.optimizeSVG = async function() {
                 sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
             ]);
         }
-
-        if (i % 20 === 0) {
-            updateProgress(Math.floor((i / objectsToProcess.length) * 20), 'Lecture...');
-            await new Promise(r => setTimeout(r, 0));
-        }
     }
 
     if (rawStrokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    updateProgress(20, 'Tri Initial (Nearest Neighbor)...');
+    // --- 2. BUILD GRAPH (Sandify Architecture) ---
+    updateProgress(20, 'Création du réseau (Graph)...');
     await new Promise(r => setTimeout(r, 20));
 
-    // 2. TSP : NEAREST NEIGHBOR PURE
-    function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
-
-    let optimized = [];
-    let unvisited = [...rawStrokes];
-    optimized.push(unvisited.shift());
+    let nodes = [];
+    let edges = [];
     
-    let totalStrokes = unvisited.length;
-    let processedStrokes = 0;
-
-    while(unvisited.length > 0) {
-        let currEnd = optimized[optimized.length-1][optimized[optimized.length-1].length-1];
-        let bestIdx = -1, bestDist = Infinity, reverse = false;
-        
-        for(let i=0; i<unvisited.length; i++) {
-            let s = unvisited[i];
-            let dStart = dist(s[0], currEnd);
-            let dEnd = dist(s[s.length-1], currEnd);
-            if(dStart < bestDist) { bestDist = dStart; bestIdx = i; reverse = false; }
-            if(dEnd < bestDist) { bestDist = dEnd; bestIdx = i; reverse = true; }
+    // Fonction pour fusionner les points très proches (Tolérance 0.5px)
+    function getNodeId(p) {
+        for(let i=0; i<nodes.length; i++) {
+            if(Math.hypot(nodes[i].x - p.x, nodes[i].y - p.y) < 0.5) return i;
         }
-        
-        let nextStroke = unvisited.splice(bestIdx, 1)[0];
-        if(reverse) nextStroke.reverse();
-        optimized.push(nextStroke);
+        nodes.push(p); return nodes.length - 1;
+    }
 
-        processedStrokes++;
-        if (processedStrokes % 50 === 0) {
-            updateProgress(20 + Math.floor((processedStrokes / totalStrokes) * 30), 'Tri Initial...');
+    rawStrokes.forEach((stroke, i) => {
+        let u = getNodeId(stroke[0]);
+        let v = getNodeId(stroke[stroke.length-1]);
+        let len = 0;
+        for(let j=0; j<stroke.length-1; j++) len += Math.hypot(stroke[j].x-stroke[j+1].x, stroke[j].y-stroke[j+1].y);
+        edges.push({id: i, u: u, v: v, points: stroke, length: len, isBridge: false});
+    });
+
+    // --- 3. CONNECT COMPONENTS (Kruskal's MST) ---
+    updateProgress(40, 'Connexion des sous-groupes (MST Kruskal)...');
+    await new Promise(r => setTimeout(r, 20));
+
+    let parent = nodes.map((_, i) => i);
+    function findSet(i) { return parent[i] === i ? i : (parent[i] = findSet(parent[i])); }
+    function unionSet(i, j) { parent[findSet(i)] = findSet(j); }
+    edges.forEach(e => unionSet(e.u, e.v));
+
+    while(true) {
+        let root = findSet(0);
+        let allConnected = true;
+        for(let i=1; i<nodes.length; i++) { if(findSet(i) !== root) { allConnected = false; break; } }
+        if(allConnected) break;
+
+        let bestDist = Infinity; let bestU = -1; let bestV = -1;
+        for(let i=0; i<nodes.length; i++) {
+            for(let j=i+1; j<nodes.length; j++) {
+                if(findSet(i) !== findSet(j)) {
+                    let d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+                    if(d < bestDist) { bestDist = d; bestU = i; bestV = j; }
+                }
+            }
+        }
+        unionSet(bestU, bestV);
+        let bridgePts = [nodes[bestU], nodes[bestV]];
+        edges.push({id: edges.length, u: bestU, v: bestV, points: bridgePts, length: bestDist, isBridge: true});
+    }
+
+    // --- 4. EULERIZE (Dupliquer les traits pour autoriser le repassage) ---
+    updateProgress(60, 'Démêlage via Graphes (Eulerize)...');
+    await new Promise(r => setTimeout(r, 20));
+
+    let degrees = new Array(nodes.length).fill(0);
+    edges.forEach(e => { degrees[e.u]++; degrees[e.v]++; });
+    let oddNodes = [];
+    for(let i=0; i<nodes.length; i++) if(degrees[i] % 2 !== 0) oddNodes.push(i);
+
+    // Fonction Dijkstra pour trouver le plus court chemin SUR LE TRACÉ EXISTANT
+    function getShortestPath(startNode) {
+        let dist = new Array(nodes.length).fill(Infinity);
+        let prev = new Array(nodes.length).fill(null);
+        dist[startNode] = 0;
+        let pq = new MinHeap(); pq.push(startNode, 0);
+
+        let adj = Array.from({length: nodes.length}, () => []);
+        edges.forEach(e => {
+            adj[e.u].push({to: e.v, edge: e});
+            adj[e.v].push({to: e.u, edge: e});
+        });
+
+        while(!pq.isEmpty()) {
+            let curr = pq.pop(); let u = curr.id;
+            if(curr.dist > dist[u]) continue;
+            for(let neighbor of adj[u]) {
+                let v = neighbor.to; let alt = dist[u] + neighbor.edge.length;
+                if(alt < dist[v]) { dist[v] = alt; prev[v] = {u: u, edge: neighbor.edge}; pq.push(v, alt); }
+            }
+        }
+        return {dist, prev};
+    }
+
+    // Association gloutonne des noeuds impairs
+    let passes = 0;
+    while(oddNodes.length > 0) {
+        let u = oddNodes[0];
+        let paths = getShortestPath(u);
+        let bestVIdx = -1; let bestDist = Infinity;
+        for(let i=1; i<oddNodes.length; i++) {
+            let v = oddNodes[i];
+            if(paths.dist[v] < bestDist) { bestDist = paths.dist[v]; bestVIdx = i; }
+        }
+        let v = oddNodes[bestVIdx];
+        
+        // On duplique le chemin exact (ce qui autorise la bille à repasser dessus !)
+        let curr = v;
+        while(curr !== u) {
+            let step = paths.prev[curr]; let e = step.edge;
+            edges.push({id: edges.length, u: e.u, v: e.v, points: e.points, length: e.length, isDuplicate: true});
+            curr = step.u;
+        }
+        oddNodes.splice(bestVIdx, 1); oddNodes.splice(0, 1);
+
+        passes++;
+        if (passes % 10 === 0) {
+            updateProgress(60 + Math.floor((1 - (oddNodes.length / (rawStrokes.length*2))) * 20), 'Routage (Eulerize)...');
             await new Promise(r => setTimeout(r, 0));
         }
     }
 
-    // 3. 2-OPT
-    updateProgress(50, 'Démêlage des tracés (2-Opt)...');
+    // --- 5. TRAVERSE (Hierholzer Algorithm pour le chemin final continu) ---
+    updateProgress(85, 'Génération du chemin continu (Hierholzer)...');
     await new Promise(r => setTimeout(r, 20));
 
-    let improved = true;
-    let passes = 0;
-    while(improved && passes < 15) { 
-        improved = false;
-        passes++;
-        
-        for (let i = 0; i < optimized.length - 1; i++) {
-            for (let k = i + 1; k < optimized.length; k++) {
-                let currEnd = optimized[i][optimized[i].length - 1];
-                let nextStart = optimized[i + 1][0];
-                let kEnd = optimized[k][optimized[k].length - 1];
-                let kNextStart = (k + 1 < optimized.length) ? optimized[k + 1][0] : null;
-
-                let d1 = dist(currEnd, nextStart);
-                let d2 = kNextStart ? dist(kEnd, kNextStart) : 0;
-                let currentTotal = d1 + d2;
-
-                let new_d1 = dist(currEnd, kEnd);
-                let new_d2 = kNextStart ? dist(nextStart, kNextStart) : 0;
-                let newTotal = new_d1 + new_d2;
-
-                if (newTotal < currentTotal - 0.001) {
-                    let subArray = optimized.slice(i + 1, k + 1);
-                    subArray.reverse();
-                    subArray.forEach(stroke => stroke.reverse());
-                    optimized.splice(i + 1, k - i, ...subArray);
-                    improved = true;
-                }
-            }
-        }
-        updateProgress(50 + Math.min(40, passes * 3), 'Optimisation 2-Opt...');
-        await new Promise(r => setTimeout(r, 0));
-    }
-
-    updateProgress(90, 'Génération du dessin...');
-    await new Promise(r => setTimeout(r, 20));
-
-    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
-    
-    // 4. DESSIN WYSIWYG
-    optimized.forEach((stroke, i) => {
-        let d = "M " + stroke[0].x + " " + stroke[0].y;
-        for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
-        let pathObj = new fabric.Path(d, {
-            fill: null, stroke: '#2980b9', strokeWidth: 3, strokeLineCap: 'round', strokeLineJoin: 'round',
-            selectable: false, isUserStroke: true, createdAt: Date.now() + i, sunaeAbsPoints: stroke
-        });
-        canvas.add(pathObj);
+    let adj = Array.from({length: nodes.length}, () => []);
+    edges.forEach(e => {
+        e.used = false;
+        adj[e.u].push({to: e.v, edge: e, dir: 1}); // 1 = endroit
+        adj[e.v].push({to: e.u, edge: e, dir: -1}); // -1 = envers
     });
 
-    updateTravelLines();
+    let eulerPath = [];
+    function dfs(u) {
+        while(adj[u].length > 0) {
+            let neighbor = adj[u].pop();
+            if(neighbor.edge.used) continue;
+            neighbor.edge.used = true;
+            dfs(neighbor.to);
+            eulerPath.push(neighbor);
+        }
+    }
+    dfs(0); 
+    eulerPath.reverse();
+
+    updateProgress(95, 'Dessin WYSIWYG...');
+    await new Promise(r => setTimeout(r, 20));
+
+    // --- 6. DESSIN SUR LE CANEVAS ---
+    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
+    
+    // On dessine le résultat d'un seul trait magique !
+    eulerPath.forEach((step, i) => {
+        let pts = [...step.edge.points];
+        if(step.dir === -1) pts.reverse();
+
+        let isRed = step.edge.isBridge; // Seuls les "sauts" obligatoires dans le vide seront rouges !
+        // Les lignes dupliquées (repassage) seront invisibles (fondues dans le bleu)
+
+        let d = "M " + pts[0].x + " " + pts[0].y;
+        for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
+        
+        let pathObj = new fabric.Path(d, {
+            fill: null, stroke: isRed ? 'red' : '#2980b9', 
+            strokeWidth: isRed ? 2 : 3, strokeDashArray: isRed ? [5, 5] : null, opacity: isRed ? 0.7 : 1,
+            strokeLineCap: 'round', strokeLineJoin: 'round',
+            selectable: false, isUserStroke: !isRed, isTravelLine: isRed, createdAt: Date.now() + i, sunaeAbsPoints: pts, travelIndex: isRed ? i : undefined
+        });
+        canvas.add(pathObj);
+        if(isRed) pathObj.sendToBack();
+    });
+
+    canvas.renderAll();
 
     updateProgress(100, 'Terminé !');
     setTimeout(() => { pContainer.style.display = 'none'; btn.disabled = false; btn.style.opacity = '1'; }, 1000);
@@ -420,7 +470,6 @@ function setupWorkspace(tableName, round, w, h) {
                 absPoints.push({x: p.x, y: p.y}); 
             }
         }
-
         pathObj.set({ selectable: false, isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: absPoints });
         updateTravelLines();
     });
@@ -483,7 +532,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LE ROUTAGE DIJKSTRA (POUR REPASSER SUR LES TRAITS EXISTANTS) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -495,102 +544,19 @@ function getStrokeEnd(stroke) {
 }
 
 function updateTravelLines() {
+    if(currentModule !== 'Dessin Libre') return; // Le SVG gère ses propres lignes rouges
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
-
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    if(userStrokes.length < 2) { if (bgImageObj) bgImageObj.sendToBack(); canvas.renderAll(); return; }
-
-    // 1. Construction du réseau routier
-    let allPoints = [];
-    userStrokes.forEach((stroke, sIdx) => {
-        if(!stroke.sunaeAbsPoints) return;
-        stroke.sunaeAbsPoints.forEach((pt, pIdx) => {
-            allPoints.push({x: pt.x, y: pt.y, sIdx: sIdx, pIdx: pIdx, id: allPoints.length});
-        });
-    });
-
-    let cellSize = 5; let grid = {};
-    allPoints.forEach(p => {
-        let key = Math.floor(p.x/cellSize) + ',' + Math.floor(p.y/cellSize);
-        if(!grid[key]) grid[key] = []; grid[key].push(p);
-    });
-
-    let adj = Array.from({length: allPoints.length}, () => []);
-    for(let i=0; i<allPoints.length; i++) {
-        let p1 = allPoints[i];
-        if(p1.pIdx < userStrokes[p1.sIdx].sunaeAbsPoints.length - 1) {
-            let p2 = allPoints[i+1]; let d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-            adj[p1.id].push({to: p2.id, weight: d}); adj[p2.id].push({to: p1.id, weight: d});
-        }
-        let gx = Math.floor(p1.x/cellSize), gy = Math.floor(p1.y/cellSize);
-        for(let dx=-1; dx<=1; dx++) {
-            for(let dy=-1; dy<=1; dy++) {
-                let key = (gx+dx) + ',' + (gy+dy);
-                if(grid[key]) {
-                    grid[key].forEach(p2 => {
-                        if(p1.id < p2.id) {
-                            let d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-                            if(d <= 2.5) { adj[p1.id].push({to: p2.id, weight: d}); adj[p2.id].push({to: p1.id, weight: d}); }
-                        }
-                    });
-                }
-            }
-        }
-    }
-
-    function getClosestNode(pt) {
-        let closest = -1, minDist = Infinity;
-        let gx = Math.floor(pt.x/cellSize), gy = Math.floor(pt.y/cellSize);
-        for(let dx=-1; dx<=1; dx++) {
-            for(let dy=-1; dy<=1; dy++) {
-                let key = (gx+dx) + ',' + (gy+dy);
-                if(grid[key]) {
-                    grid[key].forEach(p => { let d = Math.hypot(pt.x - p.x, pt.y - p.y); if(d < minDist) { minDist = d; closest = p.id; } });
-                }
-            }
-        }
-        return closest;
-    }
-
-    // 2. Recherche du chemin le long des lignes (Dijkstra)
+    
     for (let i = 1; i < userStrokes.length; i++) {
         const prevEnd = getStrokeEnd(userStrokes[i - 1]);
         const currStart = getStrokeStart(userStrokes[i]);
-        if(!prevEnd || !currStart) continue;
 
-        let sId = getClosestNode(prevEnd); let eId = getClosestNode(currStart);
-        let travelPts = [prevEnd, currStart]; 
-
-        if(sId !== -1 && eId !== -1 && sId !== eId) {
-            let dist = new Float32Array(allPoints.length).fill(Infinity);
-            let prev = new Int32Array(allPoints.length).fill(-1);
-            dist[sId] = 0; let pq = new MinHeap(); pq.push(sId, 0);
-
-            while(!pq.isEmpty()) {
-                let curr = pq.pop(); let u = curr.id; let d = curr.dist;
-                if(u === eId) break;
-                if(d > dist[u]) continue;
-                for(let edge of adj[u]) {
-                    let v = edge.to; let nd = d + edge.weight;
-                    if(nd < dist[v]) { dist[v] = nd; prev[v] = u; pq.push(v, nd); }
-                }
-            }
-
-            if(dist[eId] < Infinity) {
-                travelPts = []; let curr = eId;
-                while(curr !== -1) { travelPts.push({x: allPoints[curr].x, y: allPoints[curr].y}); curr = prev[curr]; }
-                travelPts.reverse();
-            }
-        } else if (sId === eId && sId !== -1) {
-            travelPts = [prevEnd];
-        }
-
-        if (travelPts.length > 1) {
-            let d = "M " + travelPts[0].x + " " + travelPts[0].y;
-            for(let j=1; j<travelPts.length; j++) d += " L " + travelPts[j].x + " " + travelPts[j].y;
-            const redLine = new fabric.Path(d, {
-                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], fill: '', opacity: 0.7,
-                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1, sunaeAbsPoints: travelPts
+        if (prevEnd && currStart) {
+            const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
+                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
+                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1,
+                sunaeAbsPoints: [prevEnd, currStart] 
             });
             canvas.add(redLine); redLine.sendToBack();
         }
@@ -599,7 +565,7 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ ---
+// --- LE SIMULATEUR ANIMÉ UNIFIÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -615,35 +581,22 @@ function setupSimulator() {
         if (currentModule === 'Texte Automatique') return; 
 
         const percent = parseInt(this.value); simOverlay.innerHTML = '';
-        const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-        const travels = canvas.getObjects().filter(o => o.isTravelLine).sort((a, b) => a.travelIndex - b.travelIndex);
+        
+        let allSegments = canvas.getObjects().filter(o => o.isUserStroke || o.isTravelLine).sort((a, b) => a.createdAt - b.createdAt);
 
         if (percent === 100) {
             if (currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
-            canvas.getObjects().forEach(o => {
-                if (o.isUserStroke || o.isTravelLine) {
-                    o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
-                    if (o.type === 'path' && o.origPath) {
-                        o.set({ path: o.origPath, left: o.origLeft, top: o.origTop, pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), width: o.origWidth, height: o.origHeight });
-                    }
-                    if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
-                }
+            allSegments.forEach(o => {
+                o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
+                if (o.type === 'path' && o.origPath) o.set({ path: o.origPath, left: o.origLeft, top: o.origTop, pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), width: o.origWidth, height: o.origHeight });
+                if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
             });
             canvas.renderAll(); return;
         }
 
         canvas.isDrawingMode = false;
-        
-        let allSegments = [];
-        for (let i = 0; i < strokes.length; i++) {
-            if (i > 0) {
-                const exactTravel = travels.find(t => t.travelIndex === i - 1);
-                if (exactTravel) allSegments.push(exactTravel);
-            }
-            allSegments.push(strokes[i]);
-        }
-
         let totalLength = 0;
+        
         allSegments.forEach(seg => {
             if (seg.type === 'path' && !seg.origPath) {
                 seg.origPath = seg.path; seg.origLeft = seg.left; seg.origTop = seg.top;
@@ -676,7 +629,6 @@ function setupSimulator() {
                     const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
                     seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
                     seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
-
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
                         const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
                         currentDotPos = seg.sunaeAbsPoints[targetIdx];
@@ -696,7 +648,6 @@ function setupSimulator() {
         if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         simOverlay.innerHTML = svgDots;
-
         canvas.renderAll();
     });
 }
