@@ -1,19 +1,19 @@
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
-from PIL import Image, ImageDraw
-import math
+from PIL import Image
+import json
 
 # --- 1. CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Sunae Studio", layout="wide", initial_sidebar_state="collapsed")
 
-# --- 2. CONFIGURATIONS DES TABLES (Dimensions fiables) ---
+# --- 2. CONFIGURATIONS DES TABLES ---
 TABLE_CONFIGS = {
     "Origin S": {"is_round": True, "canvas_w": 600, "canvas_h": 600},
     "Dimension S": {"is_round": False, "canvas_w": 700, "canvas_h": 350},
     "Dimension L": {"is_round": False, "canvas_w": 800, "canvas_h": 400}
 }
 
-# --- 3. INJECTION DU CSS GLOBAL (Uniquement pour les beaux menus) ---
+# --- 3. INJECTION DU CSS GLOBAL ---
 def inject_global_css():
     st.markdown("""
     <style>
@@ -21,7 +21,24 @@ def inject_global_css():
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Cartes de menu (Étapes 1 et 2) */
+    /* LE SLIDER EN BILLE CHROMÉE */
+    .stSlider [role="slider"] {
+        background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%) !important;
+        border: none !important;
+        box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5) !important;
+        width: 28px !important; height: 28px !important; border-radius: 50% !important;
+    }
+    .stSlider > div > div > div {
+        background: #d4c5b0 !important; height: 8px !important;
+        border-radius: 4px !important; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
+    }
+    
+    /* CENTRAGE DU CANEVAS */
+    div[data-testid="stVerticalBlock"] > div:has(iframe), div[data-testid="stVerticalBlock"] > div:has(svg.sunae-canvas-frame) {
+        display: flex; justify-content: center;
+    }
+    
+    /* CARTES BLEU NUIT (ÉTAPE 1 ET 2) */
     div[data-testid="stVerticalBlock"]:has(.step-marker) [data-testid="column"] {
         background-color: #171d2b !important; border-radius: 12px !important;
         border: 1px solid #2a3441 !important; padding: 15px !important;
@@ -41,12 +58,6 @@ def inject_global_css():
     div[data-testid="stVerticalBlock"]:has(.step2-marker) [data-testid="column"] img {
         width: 60% !important; margin: 0 auto 15px auto !important; display: block;
     }
-    
-    /* Centrage du Canevas pour éviter l'étirement */
-    div[data-testid="stVerticalBlock"] > div:has(iframe) { display: flex; justify-content: center; }
-    
-    /* Simulateur SVG centré */
-    .svg-container { display: flex; justify-content: center; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -82,40 +93,27 @@ def reset_drawing():
     st.session_state.my_drawing = None
     st.session_state.canvas_key += 1
 
-# --- GÉNÉRATION DE L'IMAGE DE FOND (Gère la limite de table + l'image importée) ---
-def generate_background_image(cfg, uploaded_file, scale, angle, pan_x, pan_y):
-    w, h = cfg["canvas_w"], cfg["canvas_h"]
-    # Fond blanc de base
-    base = Image.new("RGB", (w, h), "white")
-    
-    # Si une image est uploadée, on applique les modifications Python (Pil)
-    if uploaded_file is not None:
-        try:
-            img = Image.open(uploaded_file).convert("RGBA")
-            # Échelle
-            new_w, new_h = int(img.width * scale), int(img.height * scale)
-            img = img.resize((max(1, new_w), max(1, new_h)), Image.Resampling.LANCZOS)
-            # Rotation
+# GESTION DE L'IMAGE DE FOND IMPORTÉE
+def get_bg_image(uploaded_file, scale, angle, pan_x, pan_y, w, h):
+    if uploaded_file is None:
+        return None
+    try:
+        # Base couleur sable
+        base = Image.new("RGBA", (w, h), (244, 235, 216, 255)) 
+        img = Image.open(uploaded_file).convert("RGBA")
+        new_w, new_h = int(img.width * scale), int(img.height * scale)
+        if new_w > 0 and new_h > 0:
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             img = img.rotate(-angle, expand=True)
-            # Positionnement (Pan)
             cx, cy = (w // 2) + pan_x, (h // 2) - pan_y
             paste_x, paste_y = cx - (img.width // 2), cy - (img.height // 2)
             
-            # Création d'un calque transparent pour fusionner
-            temp_layer = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+            temp_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             temp_layer.paste(img, (paste_x, paste_y), img)
-            base.paste(temp_layer, (0, 0), temp_layer)
-        except Exception as e:
-            st.error(f"Erreur image: {e}")
-
-    # Dessin de la limite de la table par-dessus (Guide visuel)
-    draw = ImageDraw.Draw(base)
-    if cfg["is_round"]:
-        draw.ellipse([0, 0, w-1, h-1], outline="#bdc3c7", width=4)
-    else:
-        draw.rectangle([0, 0, w-1, h-1], outline="#bdc3c7", width=4)
-
-    return base
+            base = Image.alpha_composite(base, temp_layer)
+        return base
+    except Exception:
+        return None
 
 # --- 5. EXÉCUTION DE L'INTERFACE ---
 inject_global_css()
@@ -124,7 +122,7 @@ inject_global_css()
 col_sp1, col_logo, col_sp2 = st.columns([1, 1, 1])
 with col_logo:
     try: st.image("2023_LOGO_SUNAE.png", use_container_width=True)
-    except: st.markdown("<h1 style='text-align: center;'>SUNAE</h1>", unsafe_allow_html=True)
+    except: st.markdown("<h1 style='text-align: center;'>SUNAE STUDIO</h1>", unsafe_allow_html=True)
 st.write("---")
 
 # ==========================================
@@ -183,7 +181,7 @@ elif st.session_state.step == 2:
         st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",), use_container_width=False)
 
 # ==========================================
-# ÉTAPE 3 : ESPACE DE TRAVAIL (WORKSPACE)
+# ÉTAPE 3 : ESPACE DE TRAVAIL
 # ==========================================
 elif st.session_state.step == 3:
     cfg = TABLE_CONFIGS[st.session_state.table]
@@ -192,12 +190,12 @@ elif st.session_state.step == 3:
     
     c_btn, c_title = st.columns([1, 4])
     c_btn.button("⬅ Changer de table", on_click=lambda: setattr(st.session_state, 'step', 2))
-    c_title.markdown(f"<h3 style='text-align: center;'>✍️ {st.session_state.module} | {st.session_state.table}</h3>", unsafe_allow_html=True)
+    c_title.markdown(f"<h3 style='text-align: center;'>Studio : {st.session_state.module} | {st.session_state.table}</h3>", unsafe_allow_html=True)
     st.write("---")
 
     if st.session_state.module == "Dessin Libre":
         
-        # Le Slider décide ce qu'on affiche !
+        # Le Slider décide de l'affichage (Dessin vs Simulateur)
         st.markdown("#### Simulation du parcours de la bille")
         slider_val = st.slider(" ", 0, 100, 100, label_visibility="collapsed")
         st.write("---")
@@ -215,11 +213,11 @@ elif st.session_state.step == 3:
             
             if drawing_mode == "✏️ Dessiner": d_mode, s_color = "freedraw", "#2980b9"
             elif drawing_mode == "📏 Ligne Droite": d_mode, s_color = "line", "#2980b9"
-            else: d_mode, s_color = "freedraw", "#ffffff" # Gomme = Blanc
+            else: d_mode, s_color = "freedraw", "#f4ebd8" # L'effaceur peint en couleur sable
             
             st.markdown("---")
             st.markdown("### Image de fond")
-            uploaded_file = st.file_uploader("Importer une image", type=["png", "jpg", "jpeg"])
+            uploaded_file = st.file_uploader("Importer une image", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
             bg_scale = st.slider("Échelle", 0.1, 3.0, 1.0, 0.05)
             bg_angle = st.slider("Rotation (°)", -180, 180, 0)
             bg_pan_x = st.slider("Déplacer X", -400, 400, 0)
@@ -230,16 +228,35 @@ elif st.session_state.step == 3:
 
         with col_canvas:
             
+            # --- LE CADRE TRAITILLÉ (CSS) ---
+            if cfg["is_round"]:
+                cadre_css = f"""<style>
+                iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
+                    border: 4px dashed #bdc3c7 !important; border-radius: 50% !important;
+                    background-color: #f4ebd8 !important; margin: 0 auto !important; display: block !important;
+                    width: {w}px !important; height: {h}px !important;
+                }}
+                </style>"""
+            else:
+                cadre_css = f"""<style>
+                iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
+                    border: 4px dashed #bdc3c7 !important; border-radius: 20px !important;
+                    background-color: #f4ebd8 !important; margin: 0 auto !important; display: block !important;
+                    width: {w}px !important; height: {h}px !important;
+                }}
+                </style>"""
+            st.markdown(cadre_css, unsafe_allow_html=True)
+            
             # --- MODE DESSIN (Slider = 100%) ---
             if slider_val == 100:
-                # Génération de l'image de fond via notre fonction Python
-                bg_img = generate_background_image(cfg, uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y)
+                bg_img = get_bg_image(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h)
                 
                 canvas_result = st_canvas(
                     fill_color="rgba(255, 165, 0, 0)",
                     stroke_width=stroke_width,
                     stroke_color=s_color,
-                    background_image=bg_img, # Image générée en fond !
+                    background_color="#f4ebd8", # Sable par défaut
+                    background_image=bg_img,    # Image modifiée injectée
                     height=h, width=w,
                     drawing_mode=d_mode,
                     initial_drawing=st.session_state.my_drawing,
@@ -250,28 +267,19 @@ elif st.session_state.step == 3:
                 if canvas_result.json_data is not None:
                     st.session_state.my_drawing = canvas_result.json_data
             
-            # --- MODE SIMULATION SVG (Slider < 100%) ---
+            # --- MODE SIMULATION (Slider < 100%) ---
             else:
-                st.markdown('<div class="svg-container">', unsafe_allow_html=True)
-                
-                # On recrée visuellement la table en CSS pour l'aperçu
-                br = "50%" if cfg["is_round"] else "0px"
-                svg_content = f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" style="background-color: white; border-radius: {br}; border: 3px solid #bdc3c7;">'
+                svg_content = f'<svg class="sunae-canvas-frame" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
                 
                 if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
                     paths = []
-                    # Lecture des traits
                     for obj in st.session_state.my_drawing["objects"]:
                         if obj["type"] == "path":
                             d_str = " ".join([ " ".join(map(str, cmd)) for cmd in obj["path"] ])
-                            start_pt = (obj["path"][0][1], obj["path"][0][2])
-                            end_pt = (obj["path"][-1][-2], obj["path"][-1][-1])
-                            paths.append({"d": d_str, "start": start_pt, "end": end_pt, "cmd_len": len(obj["path"]), "obj": obj})
+                            paths.append({"d": d_str, "start": (obj["path"][0][1], obj["path"][0][2]), "end": (obj["path"][-1][-2], obj["path"][-1][-1]), "cmd_len": len(obj["path"]), "obj": obj})
                         elif obj["type"] == "line":
                             d_str = f"M {obj['left']+obj['x1']} {obj['top']+obj['y1']} L {obj['left']+obj['x2']} {obj['top']+obj['y2']}"
-                            start_pt = (obj['left']+obj['x1'], obj['top']+obj['y1'])
-                            end_pt = (obj['left']+obj['x2'], obj['top']+obj['y2'])
-                            paths.append({"d": d_str, "start": start_pt, "end": end_pt, "cmd_len": 2, "obj": obj})
+                            paths.append({"d": d_str, "start": (obj['left']+obj['x1'], obj['top']+obj['y1']), "end": (obj['left']+obj['x2'], obj['top']+obj['y2']), "cmd_len": 2, "obj": obj})
                     
                     if paths:
                         total_cmds = sum(p["cmd_len"] for p in paths)
@@ -284,7 +292,7 @@ elif st.session_state.step == 3:
                         for p in paths:
                             if current_cmds >= cmds_to_draw: break
                             
-                            # Trait rouge de voyage
+                            # Lignes rouges de voyage
                             if current_end is not None:
                                 svg_content += f'<line x1="{current_end[0]}" y1="{current_end[1]}" x2="{p["start"][0]}" y2="{p["start"][1]}" stroke="red" stroke-width="2" />'
                             
@@ -293,12 +301,10 @@ elif st.session_state.step == 3:
                             stroke_w = p["obj"].get("strokeWidth", 3)
                             
                             if current_cmds + cmds_in_path <= cmds_to_draw:
-                                # Trait complet
                                 svg_content += f'<path d="{p["d"]}" fill="none" stroke="{color}" stroke-width="{stroke_w}" stroke-linecap="round" stroke-linejoin="round"/>'
                                 current_end = p["end"]
                                 current_cmds += cmds_in_path
                             else:
-                                # Trait partiel (En cours de dessin)
                                 rem = cmds_to_draw - current_cmds
                                 if p["obj"]["type"] == "path":
                                     partial = p["obj"]["path"][:rem]
@@ -312,13 +318,13 @@ elif st.session_state.step == 3:
                                     current_end = (px, py)
                                 break
                         
-                        # Points de départ/fin (Vert et Rouge)
+                        # Points Vert et Rouge
                         if cmds_to_draw > 0:
                             svg_content += f'<circle cx="{start_dot[0]}" cy="{start_dot[1]}" r="6" fill="#2ecc71"/>'
                             if current_end:
                                 svg_content += f'<circle cx="{current_end[0]}" cy="{current_end[1]}" r="6" fill="#c0392b"/>'
                 
-                svg_content += '</svg></div>'
+                svg_content += '</svg>'
                 st.markdown(svg_content, unsafe_allow_html=True)
                 
     else:
