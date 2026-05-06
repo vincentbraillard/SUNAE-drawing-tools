@@ -166,30 +166,32 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // --- GESTION DU DESSIN LIBRE ---
+    // --- GESTION DU DESSIN LIBRE (CORRECTION DU SAUT DE TRACÉ) ---
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
-        let offsetX = pathObj.left - pathObj.pathOffset.x;
-        let offsetY = pathObj.top - pathObj.pathOffset.y;
-
         let absPoints = []; 
 
+        // On calcule les points absolus (bloqués aux bords) SANS MODIFIER LE TRAIT VISUEL !
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
-                cmd[1] = p.x - offsetX; 
-                cmd[2] = p.y - offsetY;
+                let relX = cmd[1] - pathObj.pathOffset.x;
+                let relY = cmd[2] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y});
             } else if (cmd[0] === 'Q') {
-                let cp = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
-                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
-                cmd[1] = cp.x - offsetX; 
-                cmd[2] = cp.y - offsetY;
-                cmd[3] = p.x - offsetX; 
-                cmd[4] = p.y - offsetY;
+                let crX = cmd[1] - pathObj.pathOffset.x;
+                let crY = cmd[2] - pathObj.pathOffset.y;
+                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
+                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
+                
+                let rX = cmd[3] - pathObj.pathOffset.x;
+                let rY = cmd[4] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
                 absPoints.push({x: p.x, y: p.y}); 
             }
         }
@@ -198,7 +200,7 @@ function setupWorkspace(tableName, round, w, h) {
             selectable: false, 
             isUserStroke: true, 
             createdAt: Date.now(),
-            sunaeAbsPoints: absPoints
+            sunaeAbsPoints: absPoints // Sauvegardé silencieusement pour le serveur
         });
         
         pathObj.absStartX = absPoints[0].x; 
@@ -206,9 +208,7 @@ function setupWorkspace(tableName, round, w, h) {
         pathObj.absEndX = absPoints[absPoints.length - 1].x; 
         pathObj.absEndY = absPoints[absPoints.length - 1].y;
 
-        pathObj.setCoords(); 
         updateTravelLines();
-        canvas.renderAll();
     });
 
     canvas.on('mouse:down', function(o) {
@@ -251,16 +251,24 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
+// --- FONCTIONS MATHÉMATIQUES ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path') return { x: stroke.absStartX, y: stroke.absStartY };
-    else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+    else return { 
+        x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, 
+        y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 
+    };
 }
 
 function getStrokeEnd(stroke) {
     if (stroke.type === 'path') return { x: stroke.absEndX, y: stroke.absEndY };
-    else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+    else return { 
+        x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, 
+        y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 
+    };
 }
 
+// --- 3. LOGIQUE DES LIGNES ROUGES ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -283,6 +291,7 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
+// --- 4. ACTIONS: UNDO ET RESET ---
 window.undoStroke = function() {
     const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     if (strokes.length > 0) {
@@ -296,6 +305,7 @@ window.resetCanvas = function() {
     canvas.renderAll();
 }
 
+// --- 5. GESTION DE L'IMAGE DE FOND ---
 function setupBackgroundControls() {
     const uploadInput = document.getElementById('bg-upload');
     const scaleSlider = document.getElementById('bg-scale');
@@ -341,6 +351,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
+// --- 6. LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -460,6 +471,7 @@ function setupSimulator() {
     });
 }
 
+// --- 7. EXPORTATION VERS FLASK ---
 window.exportTHR = function() {
     let exportData = {
         table: currentTable,
