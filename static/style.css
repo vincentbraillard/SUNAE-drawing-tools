@@ -107,15 +107,17 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
     font-family: 'Courier New', Courier, monospace;
     font-weight: bold;
     font-size: 24px;
-    border: 1px solid #7f8c8d;
+    border: 1px solid rgba(127, 140, 141, 0.6);
     background: transparent;
     color: #2c3e50;
-    pointer-events: auto; /* Permet de cliquer dessus */
+    pointer-events: auto;
     box-sizing: border-box;
     text-transform: uppercase;
+    transition: all 0.2s ease;
 }
 .sunae-letter-box:focus {
     border: 2px solid #e74c3c;
-    background: rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.6);
     outline: none;
+    box-shadow: 0 0 5px rgba(231, 76, 60, 0.5);
 }
