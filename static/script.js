@@ -16,13 +16,9 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : NOM DU FICHIER ET COORDONNEES ---
 function getYYMMDD() {
     const d = new Date();
-    const yy = String(d.getFullYear()).slice(-2);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return yy + mm + dd;
+    return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 }
 
 function getGridText() {
@@ -167,6 +163,7 @@ if (svgUploadInput) {
 window.optimizeSVG = async function() {
     if(!currentSvgGroup) return;
 
+    // 1. Initialisation de la barre de progression
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
     const pBar = document.getElementById('svg-progress-bar');
@@ -181,54 +178,78 @@ window.optimizeSVG = async function() {
         pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
-    updateProgress(0, 'Analyse du dessin...');
+    updateProgress(0, 'Analyse géométrique...');
     // Laisse le temps au navigateur d'afficher la barre avant de bloquer le processeur
     await new Promise(r => setTimeout(r, 50)); 
     
     let matrix = currentSvgGroup.calcTransformMatrix();
     let strokes = [];
-    let svgNS = "http://www.w3.org/2000/svg";
     
-    let paths = [];
-    currentSvgGroup.getObjects().forEach(obj => {
-        if(obj.type === 'path') paths.push(obj);
-    });
+    // LECTURE DIRECTE EN MÉMOIRE (La méthode Sandify ⚡)
+    // On va chercher dans tous les objets (chemins, lignes, polygones) qui composent le SVG
+    let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
+    if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    let totalPaths = paths.length;
-    
-    // --- 1. LECTURE DES LIGNES ---
-    for(let i=0; i<totalPaths; i++) {
-        let obj = paths[i];
-        let pathEl = document.createElementNS(svgNS, "path");
+    for(let i=0; i<objectsToProcess.length; i++) {
+        let obj = objectsToProcess[i];
         let objMat = fabric.util.multiplyTransformMatrices(matrix, obj.calcTransformMatrix());
-        pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
         
-        let len = pathEl.getTotalLength();
-        if(len > 1) {
-            let pts = [];
-            // SANDIFY TRICK : On ne prend qu'un point tous les 8 pixels pour soulager le CPU
-            let step = 8; 
-            for(let l=0; l<=len; l+=step) {
-                let pt = pathEl.getPointAtLength(l);
-                let transformed = fabric.util.transformPoint({x: pt.x - obj.pathOffset.x, y: pt.y - obj.pathOffset.y}, objMat);
-                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-            }
-            // Point de fin obligatoire
-            let pt = pathEl.getPointAtLength(len);
-            let transformed = fabric.util.transformPoint({x: pt.x - obj.pathOffset.x, y: pt.y - obj.pathOffset.y}, objMat);
-            pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-            
-            if(pts.length > 1) strokes.push(pts);
-        }
+        if (obj.type === 'path') {
+            let currentStroke = [];
+            obj.path.forEach(cmd => {
+                let px, py;
+                if (cmd[0] === 'M' || cmd[0] === 'L') { px = cmd[1]; py = cmd[2]; }
+                else if (cmd[0] === 'Q') { px = cmd[3]; py = cmd[4]; }
+                else if (cmd[0] === 'C') { px = cmd[5]; py = cmd[6]; }
+                else if (cmd[0] === 'Z' || cmd[0] === 'z') {
+                    if (currentStroke.length > 0) currentStroke.push(currentStroke[0]);
+                    if (currentStroke.length > 1) strokes.push([...currentStroke]);
+                    currentStroke = [];
+                    return;
+                } else return;
 
-        // Met à jour la barre de progression sans figer l'écran
-        if (i % 10 === 0) {
-            updateProgress(Math.floor((i / totalPaths) * 40), 'Lecture traits...');
-            await new Promise(r => setTimeout(r, 0));
+                if (px !== undefined && py !== undefined) {
+                    let ptX = px; let ptY = py;
+                    if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                    let p = sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
+                    
+                    if (cmd[0] === 'M') {
+                        if (currentStroke.length > 1) strokes.push([...currentStroke]);
+                        currentStroke = [p];
+                    } else {
+                        currentStroke.push(p);
+                    }
+                }
+            });
+            if (currentStroke.length > 1) strokes.push([...currentStroke]);
+        }
+        else if (obj.type === 'polygon' || obj.type === 'polyline') {
+            let pts = obj.points.map(pt => {
+                let ptX = pt.x; let ptY = pt.y;
+                if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                return sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
+            });
+            if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
+            if (pts.length > 1) strokes.push(pts);
+        }
+        else if (obj.type === 'line') {
+            let p1x = obj.x1, p1y = obj.y1, p2x = obj.x2, p2y = obj.y2;
+            if (obj.pathOffset) { p1x -= obj.pathOffset.x; p1y -= obj.pathOffset.y; p2x -= obj.pathOffset.x; p2y -= obj.pathOffset.y; }
+            let t1 = fabric.util.transformPoint({x: p1x, y: p1y}, objMat);
+            let t2 = fabric.util.transformPoint({x: p2x, y: p2y}, objMat);
+            strokes.push([
+                sanitizeCoordinates(t1.x, t1.y, isRound, canvas.width, canvas.height),
+                sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
+            ]);
         }
     }
 
-    // --- 2. TSP : CHEMIN LE PLUS COURT ---
+    updateProgress(20, 'Calcul TSP...');
+    await new Promise(r => setTimeout(r, 20));
+
+    // 2. TSP : CHEMIN LE PLUS COURT (ALGO ACCÉLÉRÉ)
     let optimized = [];
     if(strokes.length > 0) {
         let unvisited = [...strokes];
@@ -237,7 +258,7 @@ window.optimizeSVG = async function() {
         let totalStrokes = unvisited.length;
         let processedStrokes = 0;
 
-        // Fonction mathématique très rapide (sans racine carrée)
+        // Astuce de vitesse : Calcul de la distance au carré sans utiliser de racine !
         function distSq(p1, p2) {
             return (p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y);
         }
@@ -261,20 +282,20 @@ window.optimizeSVG = async function() {
 
             processedStrokes++;
 
-            // Respiration du navigateur pour afficher la barre
-            if (processedStrokes % 50 === 0) {
-                updateProgress(40 + Math.floor((processedStrokes / totalStrokes) * 50), 'Calcul TSP...');
+            // Respiration du navigateur : On met à jour l'écran tous les 100 traits
+            if (processedStrokes % 100 === 0) {
+                updateProgress(20 + Math.floor((processedStrokes / totalStrokes) * 60), 'Optimisation en cours...');
                 await new Promise(r => setTimeout(r, 0));
             }
         }
     }
 
-    updateProgress(95, 'Génération visuelle...');
-    await new Promise(r => setTimeout(r, 10));
+    updateProgress(85, 'Génération visuelle...');
+    await new Promise(r => setTimeout(r, 20));
 
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    // --- 3. DESSIN SUR LE CANEVAS ---
+    // 3. DESSIN SUR LE CANEVAS (LIGNES BLEUES ET ROUGES)
     optimized.forEach((stroke, i) => {
         let d = "M " + stroke[0].x + " " + stroke[0].y;
         for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
@@ -378,6 +399,7 @@ window.undoStroke = function() {
     const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     if (strokes.length > 0) { canvas.remove(strokes[strokes.length - 1]); updateTravelLines(); }
 }
+
 window.resetCanvas = function() {
     canvas.getObjects().forEach(o => { if (!o.isBackgroundImage && o !== currentSvgGroup) canvas.remove(o); });
     canvas.renderAll();
@@ -430,7 +452,6 @@ function updateTravelLines() {
         let s2 = userStrokes[i].sunaeAbsPoints;
         
         if(s1 && s2 && s1.length > 0 && s2.length > 0) {
-            // C'est ici que l'on remplace la ligne droite rouge par le périmètre (Sandify)
             let pts = getPerimeterTravel(s1[s1.length-1], s2[0], isRound, canvas.width, canvas.height);
             let d = "M " + pts[0].x + " " + pts[0].y;
             for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
