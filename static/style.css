@@ -1,1 +1,237 @@
 
+/* --- Variables globales pour les couleurs --- */
+:root {
+    --bg-main: #0e1117;       /* Fond principal sombre (style Streamlit dark mode) */
+    --bg-card: #171d2b;       /* Bleu nuit pour les cartes */
+    --border-card: #2a3441;
+    --text-main: #ffffff;
+    --text-muted: #e2e8f0;
+    --accent-gold: #dfc391;   /* Doré pour les boutons */
+    --sand-color: #f4ebd8;    /* Couleur du sable */
+    --line-blue: #2980b9;
+    --line-red: #d32f2f;
+}
+
+/* --- Base --- */
+body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid var(--border-card);
+    margin: 20px 0;
+}
+
+/* --- En-tête --- */
+.logo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.logo-container img {
+    max-width: 200px;
+    height: auto;
+}
+
+/* --- Sections d'étapes --- */
+.step-section {
+    display: none; /* Caché par défaut, géré par JS */
+    max-width: 1200px;
+    margin: 0 auto;
+}
+.step-section.active {
+    display: block;
+}
+.section-title {
+    text-align: center;
+    margin-bottom: 30px;
+    font-weight: 600;
+}
+
+/* --- Grille de cartes (Étapes 1 et 2) --- */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    justify-content: center;
+}
+
+/* --- Design des cartes --- */
+.card {
+    background-color: var(--bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--border-card);
+    padding: 15px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    text-align: center;
+    transition: transform 0.2s;
+}
+.card:hover {
+    transform: translateY(-5px);
+}
+.card img {
+    width: 100%;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    object-fit: cover;
+}
+.card img.table-img {
+    width: 60%; /* Image plus petite pour l'étape 2 */
+    margin: 0 auto 15px auto;
+    display: block;
+}
+.card h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+.card p {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    margin-bottom: 20px;
+}
+
+/* --- Boutons standards --- */
+button {
+    background-color: transparent;
+    border: 1px solid var(--accent-gold);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 8px 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 1rem;
+}
+button:hover {
+    background-color: var(--accent-gold);
+    color: var(--bg-card);
+}
+.back-button {
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+    padding: 5px 15px;
+}
+.primary-btn {
+    background-color: #ff4b4b; /* Rouge style Streamlit */
+    border: none;
+    color: white;
+    width: 100%;
+    padding: 12px;
+    font-weight: bold;
+    margin-top: 20px;
+}
+.primary-btn:hover {
+    background-color: #ff3333;
+    color: white;
+}
+.upload-btn {
+    display: inline-block;
+    background-color: transparent;
+    border: 1px solid #555;
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    margin-bottom: 15px;
+}
+.upload-btn:hover {
+    background-color: #333;
+}
+
+/* --- Espace de travail (Étape 3) --- */
+.workspace-header {
+    display: flex;
+    align-items: center;
+}
+.workspace-title {
+    margin: 0 auto;
+    font-size: 1.5rem;
+}
+
+.workspace-grid {
+    display: grid;
+    grid-template-columns: 1fr 3fr; /* Outils 1/4, Canevas 3/4 */
+    gap: 30px;
+    margin-top: 20px;
+}
+
+/* --- Panneau d'outils --- */
+.tools-panel h3 {
+    margin-top: 0;
+    border-bottom: 1px solid var(--border-card);
+    padding-bottom: 10px;
+}
+.tool-group {
+    margin-bottom: 20px;
+}
+.action-buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.action-buttons button {
+    flex: 1;
+    font-size: 0.8rem;
+    padding: 5px;
+}
+.slider-group {
+    margin-bottom: 15px;
+}
+.slider-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+.slider-group input[type="range"] {
+    width: 100%;
+}
+
+/* --- Le Canevas (Le sable) --- */
+.canvas-panel {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+#canvas-container {
+    background-color: var(--sand-color);
+    border: 4px dashed #bdc3c7;
+    position: relative;
+    /* Les dimensions et le border-radius seront gérés dynamiquement par le JS */
+}
+
+/* On s'assure que le canvas interne prend toute la place du conteneur */
+.canvas-container {
+    margin: 0 auto;
+}
+
+/* --- Le Slider Chrome (Bille) --- */
+.simulator-section {
+    text-align: center;
+}
+#bille-slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px;
+    background: #d4c5b0; /* Sillon sable */
+    border-radius: 4px;
+    outline: none;
+    box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4);
+    margin-top: 15px;
+}
+#bille-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%);
+    box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5);
+    cursor: pointer;
+}
