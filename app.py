@@ -2,6 +2,8 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 import json
+import base64
+from io import BytesIO
 
 # --- 1. CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Sunae Studio", layout="wide", initial_sidebar_state="collapsed")
@@ -33,7 +35,7 @@ def inject_global_css():
         border-radius: 4px !important; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
     }
     
-    /* CENTRAGE DU CANEVAS */
+    /* CENTRAGE CANEVAS (Empêche la déformation) */
     div[data-testid="stVerticalBlock"] > div:has(iframe), div[data-testid="stVerticalBlock"] > div:has(svg.sunae-canvas-frame) {
         display: flex; justify-content: center;
     }
@@ -61,7 +63,7 @@ def inject_global_css():
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. GESTION DE LA NAVIGATION ET MÉMOIRE ---
+# --- 4. GESTION NAVIGATION ET MÉMOIRE ---
 if 'step' not in st.session_state: st.session_state.step = 1
 if 'module' not in st.session_state: st.session_state.module = None
 if 'table' not in st.session_state: st.session_state.table = None
@@ -93,27 +95,27 @@ def reset_drawing():
     st.session_state.my_drawing = None
     st.session_state.canvas_key += 1
 
-# GESTION DE L'IMAGE DE FOND IMPORTÉE
-def get_bg_image(uploaded_file, scale, angle, pan_x, pan_y, w, h):
-    if uploaded_file is None:
-        return None
-    try:
-        # Base couleur sable
-        base = Image.new("RGBA", (w, h), (244, 235, 216, 255)) 
-        img = Image.open(uploaded_file).convert("RGBA")
-        new_w, new_h = int(img.width * scale), int(img.height * scale)
-        if new_w > 0 and new_h > 0:
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            img = img.rotate(-angle, expand=True)
-            cx, cy = (w // 2) + pan_x, (h // 2) - pan_y
-            paste_x, paste_y = cx - (img.width // 2), cy - (img.height // 2)
-            
-            temp_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            temp_layer.paste(img, (paste_x, paste_y), img)
-            base = Image.alpha_composite(base, temp_layer)
-        return base
-    except Exception:
-        return None
+# --- ASTUCE ANTI-BUG : ENCODAGE IMAGE EN BASE64 ---
+def get_bg_image_b64(uploaded_file, scale, angle, pan_x, pan_y, w, h):
+    base = Image.new("RGBA", (w, h), (244, 235, 216, 255)) # Couleur Sable de fond
+    if uploaded_file is not None:
+        try:
+            img = Image.open(uploaded_file).convert("RGBA")
+            new_w, new_h = int(img.width * scale), int(img.height * scale)
+            if new_w > 0 and new_h > 0:
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                img = img.rotate(-angle, expand=True)
+                cx, cy = (w // 2) + pan_x, (h // 2) - pan_y
+                paste_x, paste_y = cx - (img.width // 2), cy - (img.height // 2)
+                temp_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                temp_layer.paste(img, (paste_x, paste_y), img)
+                base = Image.alpha_composite(base, temp_layer)
+        except Exception:
+            pass
+    # Convertit l'image en texte pour le web (Zéro plantage Streamlit)
+    buffered = BytesIO()
+    base.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
 
 # --- 5. EXÉCUTION DE L'INTERFACE ---
 inject_global_css()
@@ -195,7 +197,7 @@ elif st.session_state.step == 3:
 
     if st.session_state.module == "Dessin Libre":
         
-        # Le Slider décide de l'affichage (Dessin vs Simulateur)
+        # Le Slider de Simulation
         st.markdown("#### Simulation du parcours de la bille")
         slider_val = st.slider(" ", 0, 100, 100, label_visibility="collapsed")
         st.write("---")
@@ -228,35 +230,32 @@ elif st.session_state.step == 3:
 
         with col_canvas:
             
-            # --- LE CADRE TRAITILLÉ (CSS) ---
-            if cfg["is_round"]:
-                cadre_css = f"""<style>
-                iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
-                    border: 4px dashed #bdc3c7 !important; border-radius: 50% !important;
-                    background-color: #f4ebd8 !important; margin: 0 auto !important; display: block !important;
-                    width: {w}px !important; height: {h}px !important;
-                }}
-                </style>"""
-            else:
-                cadre_css = f"""<style>
-                iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
-                    border: 4px dashed #bdc3c7 !important; border-radius: 20px !important;
-                    background-color: #f4ebd8 !important; margin: 0 auto !important; display: block !important;
-                    width: {w}px !important; height: {h}px !important;
-                }}
-                </style>"""
+            # --- GÉNÉRATION IMAGE FOND ---
+            bg_b64 = get_bg_image_b64(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h)
+            
+            # --- LE CADRE TRAITILLÉ ET FOND SABLE FIXE ---
+            br = "50%" if cfg["is_round"] else "20px"
+            cadre_css = f"""<style>
+            iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
+                border: 4px dashed #bdc3c7 !important; 
+                border-radius: {br} !important;
+                background-color: #f4ebd8 !important; 
+                background-image: url("data:image/png;base64,{bg_b64}") !important;
+                background-size: cover !important; background-position: center !important;
+                margin: 0 auto !important; display: block !important;
+                width: {w}px !important; height: {h}px !important;
+                max-width: {w}px !important; max-height: {h}px !important;
+            }}
+            </style>"""
             st.markdown(cadre_css, unsafe_allow_html=True)
             
             # --- MODE DESSIN (Slider = 100%) ---
             if slider_val == 100:
-                bg_img = get_bg_image(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h)
-                
                 canvas_result = st_canvas(
                     fill_color="rgba(255, 165, 0, 0)",
                     stroke_width=stroke_width,
                     stroke_color=s_color,
-                    background_color="#f4ebd8", # Sable par défaut
-                    background_image=bg_img,    # Image modifiée injectée
+                    background_color="rgba(0,0,0,0)", # Transparent (laisse voir le fond CSS)
                     height=h, width=w,
                     drawing_mode=d_mode,
                     initial_drawing=st.session_state.my_drawing,
@@ -274,6 +273,8 @@ elif st.session_state.step == 3:
                 if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
                     paths = []
                     for obj in st.session_state.my_drawing["objects"]:
+                        if obj.get("stroke") == "#f4ebd8": continue # On ignore les coups de gomme pour le trajet machine !
+                        
                         if obj["type"] == "path":
                             d_str = " ".join([ " ".join(map(str, cmd)) for cmd in obj["path"] ])
                             paths.append({"d": d_str, "start": (obj["path"][0][1], obj["path"][0][2]), "end": (obj["path"][-1][-2], obj["path"][-1][-1]), "cmd_len": len(obj["path"]), "obj": obj})
@@ -292,7 +293,7 @@ elif st.session_state.step == 3:
                         for p in paths:
                             if current_cmds >= cmds_to_draw: break
                             
-                            # Lignes rouges de voyage
+                            # Lignes rouges de voyage (entre les traits)
                             if current_end is not None:
                                 svg_content += f'<line x1="{current_end[0]}" y1="{current_end[1]}" x2="{p["start"][0]}" y2="{p["start"][1]}" stroke="red" stroke-width="2" />'
                             
@@ -318,7 +319,7 @@ elif st.session_state.step == 3:
                                     current_end = (px, py)
                                 break
                         
-                        # Points Vert et Rouge
+                        # Points de repère Vert / Rouge
                         if cmds_to_draw > 0:
                             svg_content += f'<circle cx="{start_dot[0]}" cy="{start_dot[1]}" r="6" fill="#2ecc71"/>'
                             if current_end:
@@ -328,4 +329,4 @@ elif st.session_state.step == 3:
                 st.markdown(svg_content, unsafe_allow_html=True)
                 
     else:
-        st.warning(f"Le module '{st.session_state.module}' est en cours de portage.")
+        st.warning(f"Le module '{st.session_state.module}' est en cours de portage vers le web.")
