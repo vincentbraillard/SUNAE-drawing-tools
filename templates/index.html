@@ -1,112 +1,121 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sunae Studio - Kinetic Table Editor</title>
-    
-    <!-- Intégration de Fabric.js pour l'édition 2D -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
-    <link rel="stylesheet" href="{{ url_with_timestamp('static/style.css') }}">
-</head>
-<body>
+/* --- Variables globales pour les couleurs --- */
+:root {
+    --bg-main: #0e1117;       
+    --bg-card: #171d2b;       
+    --border-card: #2a3441;
+    --text-main: #ffffff;
+    --text-muted: #e2e8f0;
+    --accent-gold: #dfc391;   
+    --sand-color: #f4ebd8;    
+    --line-blue: #2980b9;
+    --line-red: #d32f2f;
+}
 
-<div id="main-app">
-    <!-- 1. Bannière supérieure commune -->
-    <header id="top-banner">
-        <button id="btn-back-menu" onclick="showTableSelection()">⬅ Changer de table</button>
-        <div class="active-module-title">
-            <span id="txt-active-module">Module</span> | <span id="txt-active-table">Modèle S</span>
-        </div>
-    </header>
+/* --- Base --- */
+body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+}
 
-    <!-- 2. Panneau de Simulation (Hidden in Text Mode) -->
-    <section id="simulation-panel" class="common-panel hidden-in-text-mode">
-        <h3>Simulation du parcours de la bille</h3>
-        <div class="simulation-controls">
-            <label for="simulation-slider">0%</label>
-            <input type="range" id="simulation-slider" min="0" max="100" value="100">
-            <label for="simulation-slider">100%</label>
-        </div>
-    </section>
+hr {
+    border: 0;
+    border-top: 1px solid var(--border-card);
+    margin: 20px 0;
+}
 
-    <!-- 3. Conteneur principal flexible -->
-    <main id="workspace-container">
-        
-        <!-- Colonne de gauche : Outils contextuels -->
-        <aside id="tool-sidebar">
-            
-            <!-- SECTION COMMUNE : Image de Fond (Hidden in Text Mode) -->
-            <section id="background-image-panel" class="tool-section hidden-in-text-mode">
-                <h2>Image de fond</h2>
-                <div class="import-group">
-                    <input type="file" id="bg-upload" accept="image/*">
-                    <label for="bg-upload" class="btn-import">Importer une image</label>
-                </div>
-                <div class="control-group">
-                    <label>Échelle: <span id="val-scale">1.0</span></label>
-                    <input type="range" id="bg-scale" min="0.1" max="3" step="0.01" value="1.0">
-                </div>
-                <div class="control-group">
-                    <label>Rotation (°): <span id="val-angle">0</span></label>
-                    <input type="range" id="bg-angle" min="0" max="360" step="1" value="0">
-                </div>
-                <div class="control-group">
-                    <label>Déplacer X: <span id="val-pan-x">0</span></label>
-                    <input type="range" id="bg-pan-x" min="-500" max="500" step="1" value="0">
-                </div>
-                <div class="control-group">
-                    <label>Déplacer Y: <span id="val-pan-y">0</span></label>
-                    <input type="range" id="bg-pan-y" min="-500" max="500" step="1" value="0">
-                </div>
-            </section>
+/* --- En-tête --- */
+.logo-container {
+    display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
+}
+.logo-container img { max-width: 200px; height: auto; }
 
-            <!-- SECTION : Outils Texte Automatique -->
-            <section id="text-module-tools" class="tool-section module-specific active">
-                <h2>Génération de Texte</h2>
-                <div class="control-group">
-                    <input type="text" id="text-input" placeholder="Entrez votre texte ybys">
-                </div>
-                <div class="info-box">
-                    <span class="info-icon">i</span>
-                    <p>Police Sunae : Le texte sera tracé en utilisant les lettres et chiffres continus créés sur-mesure pour la bille.</p>
-                </div>
-                <button id="btn-insert-text" class="btn-primary" onclick="addTextToCanvas()">➕ Insérer le texte</button>
-                
-                <p class="help-text">Cliquez sur le texte pour le déplacer, le redimensionner ou le tourner.</p>
-                
-                <div class="canvas-actions">
-                    <button class="btn-danger" onclick="deleteSelectedText()">Delete selected</button>
-                    <button class="btn-warning" onclick="clearCanvasTextOnly()">Tout effacer</button>
-                </div>
-            </section>
+/* --- Sections d'étapes --- */
+.step-section {
+    display: none; max-width: 1200px; margin: 0 auto;
+}
+.step-section.active { display: block; }
+.section-title { text-align: center; margin-bottom: 30px; font-weight: 600; }
 
-            <!-- SECTION : Outils Dessin Libre (Masquée par défaut) -->
-            <section id="drawing-module-tools" class="tool-section module-specific">
-                <h2>Dessin Libre</h2>
-                <div class="draw-modes">
-                    <button id="mode-freedraw" onclick="setDrawingMode('freedraw')">🖌️ Tracé Libre</button>
-                    <button id="mode-lines" onclick="setDrawingMode('lines')">📏 Lignes Droites</button>
-                </div>
-                <div class="canvas-actions">
-                    <button class="btn-danger" onclick="resetWorkspace()">🗑 Effacer tout le dessin</button>
-                </div>
-            </section>
+/* --- Grille de cartes --- */
+.card-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; justify-content: center;
+}
 
-        </aside>
+.card {
+    background-color: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-card);
+    padding: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); text-align: center; transition: transform 0.2s;
+}
+.card:hover { transform: translateY(-5px); }
+.card img { width: 100%; border-radius: 8px; margin-bottom: 15px; object-fit: cover; }
+.card img.table-img { width: 60%; margin: 0 auto 15px auto; display: block; }
+.card h3 { margin-top: 0; margin-bottom: 10px; }
+.card p { color: var(--text-muted); font-size: 0.9em; margin-bottom: 20px; }
 
-        <!-- Colonne de droite : Zone d'édition (Canevas) -->
-        <section id="canvas-panel">
-            <div id="canvas-container">
-                <canvas id="sunae-canvas"></canvas>
-            </div>
-        </section>
+/* --- Boutons --- */
+button {
+    background-color: transparent; border: 1px solid var(--accent-gold); color: var(--text-main);
+    border-radius: 6px; padding: 8px 20px; cursor: pointer; transition: all 0.3s ease; font-size: 1rem;
+}
+button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
+.back-button { margin-bottom: 20px; font-size: 0.9rem; padding: 5px 15px; }
+.primary-btn { background-color: #ff4b4b; border: none; color: white; width: 100%; padding: 12px; font-weight: bold; margin-top: 20px; }
+.primary-btn:hover { background-color: #ff3333; color: white; }
+.upload-btn {
+    display: inline-block; background-color: transparent; border: 1px solid #555; color: var(--text-main);
+    border-radius: 6px; padding: 8px 15px; cursor: pointer; font-size: 0.9rem; margin-bottom: 15px; text-align: center;
+}
+.upload-btn:hover { background-color: #333; }
 
-    </main>
-</div>
+/* --- Espace de travail --- */
+.workspace-header { display: flex; align-items: center; }
+.workspace-title { margin: 0 auto; font-size: 1.5rem; }
+.workspace-grid { display: grid; grid-template-columns: 1fr 3fr; gap: 30px; margin-top: 20px; }
 
-<!-- Scripts JS -->
-<script src="{{ url_with_timestamp('static/script.js') }}"></script>
+.tools-panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-card); padding-bottom: 10px; }
+.tool-group { margin-bottom: 20px; }
+.action-buttons { display: flex; gap: 10px; margin-bottom: 20px; }
+.action-buttons button { flex: 1; font-size: 0.8rem; padding: 5px; }
+.slider-group { margin-bottom: 15px; }
+.slider-group label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: var(--text-muted); }
+.slider-group input[type="range"] { width: 100%; }
 
-</body>
-</html>
+/* --- Le Canevas --- */
+.canvas-panel { display: flex; justify-content: center; align-items: flex-start; }
+#canvas-container {
+    background-color: var(--sand-color); border: 4px dashed #bdc3c7; position: relative; overflow: hidden;
+}
+.canvas-container { margin: 0 auto; }
+
+/* --- Le Slider Chrome --- */
+.simulator-section { text-align: center; }
+#bille-slider {
+    -webkit-appearance: none; width: 100%; height: 8px; background: #d4c5b0; border-radius: 4px; outline: none; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4); margin-top: 15px;
+}
+#bille-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 28px; height: 28px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%);
+    box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5); cursor: pointer;
+}
+
+/* --- Les cases de texte Sunae --- */
+.sunae-letter-box {
+    position: absolute;
+    text-align: center;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    font-size: 24px;
+    border: 1px solid #7f8c8d;
+    background: transparent;
+    color: #2c3e50;
+    pointer-events: auto; /* Permet de cliquer dessus */
+    box-sizing: border-box;
+    text-transform: uppercase;
+}
+.sunae-letter-box:focus {
+    border: 2px solid #e74c3c;
+    background: rgba(255, 255, 255, 0.5);
+    outline: none;
+}
