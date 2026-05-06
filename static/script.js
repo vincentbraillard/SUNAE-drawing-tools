@@ -1,4 +1,3 @@
-
 // --- VARIABLES GLOBALES ---
 let canvas = null;
 let currentTable = null;
@@ -35,36 +34,30 @@ function setupWorkspace(tableName, round, w, h) {
     document.getElementById('workspace-title').innerText = "Dessin Libre | " + currentTable;
     goToStep(3);
 
-    // Si un canevas existe déjà, on le détruit pour repartir à zéro
     if (canvas) {
         canvas.dispose();
     }
 
-    // Configurer la taille du conteneur HTML
     const container = document.getElementById('canvas-container');
     container.style.width = w + 'px';
     container.style.height = h + 'px';
     container.style.borderRadius = isRound ? '50%' : '20px';
 
-    // Initialiser Fabric.js
     canvas = new fabric.Canvas('sunae-canvas', {
         width: w,
         height: h,
         isDrawingMode: true,
-        selection: false // On ne veut pas sélectionner les traits pour les déplacer
+        selection: false
     });
 
-    // Paramètres du pinceau (Bleu Sunae, épaisseur 3)
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
 
-    // Événements de dessin
     canvas.on('path:created', function(e) {
         e.path.set({ selectable: false, evented: false, isUserStroke: true });
         updateTravelLines();
     });
 
-    // Événements pour l'outil Ligne Droite
     canvas.on('mouse:down', function(o) {
         if (drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
         isDrawingLine = true;
@@ -98,7 +91,6 @@ function setupWorkspace(tableName, round, w, h) {
         }
     });
 
-    // Écouteurs pour les outils
     document.querySelectorAll('input[name="drawMode"]').forEach(radio => {
         radio.addEventListener('change', function() {
             drawMode = this.value;
@@ -110,40 +102,34 @@ function setupWorkspace(tableName, round, w, h) {
     setupSimulator();
 }
 
-// --- 3. LOGIQUE DES LIGNES ROUGES DE VOYAGE (En temps réel !) ---
+// --- 3. LOGIQUE DES LIGNES ROUGES DE VOYAGE ---
 function updateTravelLines() {
-    // 1. Supprimer les anciennes lignes rouges
     const objects = canvas.getObjects();
     const travelLines = objects.filter(o => o.isTravelLine);
     travelLines.forEach(line => canvas.remove(line));
 
-    // 2. Récupérer uniquement les vrais traits de l'utilisateur
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke);
     
-    // 3. Calculer et dessiner les nouvelles lignes rouges
     for (let i = 1; i < userStrokes.length; i++) {
         const prevStroke = userStrokes[i - 1];
         const currStroke = userStrokes[i];
         
         let prevEnd, currStart;
 
-        // Trouver la fin du trait précédent
         if (prevStroke.type === 'path') {
             const pathInfo = prevStroke.path[prevStroke.path.length - 1];
-            prevEnd = { x: pathInfo[1], y: pathInfo[2] }; // X, Y du dernier point
+            prevEnd = { x: pathInfo[1], y: pathInfo[2] };
         } else if (prevStroke.type === 'line') {
             prevEnd = { x: prevStroke.x2, y: prevStroke.y2 };
         }
 
-        // Trouver le début du trait actuel
         if (currStroke.type === 'path') {
             const pathInfo = currStroke.path[0];
-            currStart = { x: pathInfo[1], y: pathInfo[2] }; // X, Y du premier point
+            currStart = { x: pathInfo[1], y: pathInfo[2] };
         } else if (currStroke.type === 'line') {
             currStart = { x: currStroke.x1, y: currStroke.y1 };
         }
 
-        // Dessiner la ligne rouge traitillée
         if (prevEnd && currStart) {
             const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
                 stroke: 'red',
@@ -152,14 +138,13 @@ function updateTravelLines() {
                 opacity: 0.7,
                 selectable: false,
                 evented: false,
-                isTravelLine: true // Marqueur pour pouvoir l'effacer plus tard
+                isTravelLine: true
             });
             canvas.add(redLine);
-            redLine.sendToBack(); // On met la ligne rouge sous les traits bleus
+            redLine.sendToBack();
         }
     }
     
-    // On s'assure que l'image de fond reste tout derrière
     if (bgImageObj) bgImageObj.sendToBack();
     canvas.renderAll();
 }
@@ -170,12 +155,11 @@ function undoStroke() {
     if (strokes.length > 0) {
         const lastStroke = strokes[strokes.length - 1];
         canvas.remove(lastStroke);
-        updateTravelLines(); // Recalcule les lignes rouges instantanément
+        updateTravelLines();
     }
 }
 
 function resetCanvas() {
-    // Garde uniquement l'image de fond s'il y en a une
     const objects = canvas.getObjects();
     objects.forEach(o => {
         if (!o.isBackgroundImage) canvas.remove(o);
@@ -239,7 +223,7 @@ function setupBackgroundControls() {
                 
                 canvas.add(bgImageObj);
                 bgImageObj.sendToBack();
-                updateBgImage(); // Appliquer les sliders existants
+                updateBgImage();
             });
         };
         reader.readAsDataURL(file);
@@ -251,18 +235,37 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (La Bille) ---
+// --- 6. LE SIMULATEUR ANIMÉ (Au pixel près !) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     
+    // Ajout d'une div pour dessiner les points Vert/Rouge de la simulation
+    let simOverlay = document.getElementById('sim-overlay');
+    if (!simOverlay) {
+        simOverlay = document.createElement('div');
+        simOverlay.id = 'sim-overlay';
+        simOverlay.style.position = 'absolute';
+        simOverlay.style.top = '0';
+        simOverlay.style.left = '0';
+        simOverlay.style.width = '100%';
+        simOverlay.style.height = '100%';
+        simOverlay.style.pointerEvents = 'none'; // Laisse passer les clics
+        document.getElementById('canvas-container').appendChild(simOverlay);
+    }
+    
     slider.addEventListener('input', function() {
         const percent = parseInt(this.value);
-        
+        simOverlay.innerHTML = ''; // Efface les anciens points
+
         // Mode Dessin
         if (percent === 100) {
             canvas.isDrawingMode = (drawMode === 'freedraw');
             canvas.getObjects().forEach(o => {
-                if (o.isUserStroke || o.isTravelLine) o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
+                if (o.isUserStroke || o.isTravelLine) {
+                    o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
+                    // On retire le "masquage" partiel
+                    if(o.strokeDashArray && o.isUserStroke) o.strokeDashArray = null; 
+                }
             });
             canvas.renderAll();
             return;
@@ -271,32 +274,113 @@ function setupSimulator() {
         // Mode Simulation
         canvas.isDrawingMode = false;
         
-        // On récupère tous les traits (bleus et rouges) triés chronologiquement
         const strokes = canvas.getObjects().filter(o => o.isUserStroke);
         const travels = canvas.getObjects().filter(o => o.isTravelLine);
         
         let allSegments = [];
+        let totalLength = 0;
+
+        // 1. Calcul de la longueur totale de l'animation
         for (let i = 0; i < strokes.length; i++) {
-            if (i > 0 && travels[i-1]) allSegments.push(travels[i-1]);
-            allSegments.push(strokes[i]);
+            if (i > 0 && travels[i-1]) {
+                const tr = travels[i-1];
+                tr.segmentLength = Math.hypot(tr.x2 - tr.x1, tr.y2 - tr.y1);
+                totalLength += tr.segmentLength;
+                allSegments.push(tr);
+            }
+            
+            const st = strokes[i];
+            // Calcul approximatif de la longueur d'un Path (si ce n'est pas une ligne droite)
+            let len = 0;
+            if (st.type === 'path') {
+                for(let j=1; j<st.path.length; j++) {
+                     let p1 = st.path[j-1];
+                     let p2 = st.path[j];
+                     if(p1.length >=3 && p2.length >=3) {
+                         len += Math.hypot(p2[1]-p1[1], p2[2]-p1[2]);
+                     }
+                }
+            } else if (st.type === 'line') {
+                len = Math.hypot(st.x2 - st.x1, st.y2 - st.y1);
+            }
+            // Si on n'arrive pas à calculer (très rare), on donne une valeur par défaut
+            st.segmentLength = len > 0 ? len : 50; 
+            totalLength += st.segmentLength;
+            
+            allSegments.push(st);
         }
 
-        const totalSegments = allSegments.length;
-        if (totalSegments === 0) return;
+        if (totalLength === 0) return;
 
-        const visibleCount = Math.floor((percent / 100) * totalSegments);
+        // Longueur que la bille doit avoir parcourue au moment T du slider
+        const targetLength = (percent / 100) * totalLength;
+        let currentLength = 0;
+        let currentDotPos = null;
+        let startDotPos = null;
 
+        // 2. Affichage progressif ("Draw-on")
         allSegments.forEach((seg, index) => {
-            if (index < visibleCount) {
-                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) }); // Afficher entièrement
-            } else if (index === visibleCount) {
-                // Pour une simulation encore plus fluide, on pourrait utiliser strokeDashArray ici, 
-                // mais pour garantir 0 bug de rendu, on gère par trait entier dans cette version.
-                seg.set({ opacity: 0.3 }); // Afficher le trait en cours en semi-transparent
-            } else {
-                seg.set({ opacity: 0 }); // Cacher les traits futurs
+            const isTravel = seg.isTravelLine;
+            
+            // Si on récupère le premier point du premier segment
+            if (index === 0) {
+                 if (seg.type === 'path') startDotPos = {x: seg.path[0][1], y: seg.path[0][2]};
+                 else if (seg.type === 'line') startDotPos = {x: seg.x1, y: seg.y1};
+            }
+
+            if (currentLength + seg.segmentLength <= targetLength) {
+                // Segment complètement affiché
+                seg.set({ opacity: (isTravel ? 0.7 : 1) });
+                if(!isTravel) seg.strokeDashArray = null; // Affiche tout
+                
+                // Maj position bille
+                if (seg.type === 'path') currentDotPos = {x: seg.path[seg.path.length-1][1], y: seg.path[seg.path.length-1][2]};
+                else if (seg.type === 'line') currentDotPos = {x: seg.x2, y: seg.y2};
+                
+                currentLength += seg.segmentLength;
+            } 
+            else if (currentLength < targetLength) {
+                // Segment PARTIELLEMENT affiché (La fameuse animation !)
+                const remainingLength = targetLength - currentLength;
+                
+                seg.set({ opacity: (isTravel ? 0.7 : 1) });
+                
+                // On utilise la magie de strokeDashArray pour masquer le "futur" du trait
+                seg.set('strokeDashArray', [remainingLength, seg.segmentLength]);
+                
+                // Calcul position approximative de la bille rouge sur ce segment
+                let ratio = remainingLength / seg.segmentLength;
+                if (seg.type === 'path') {
+                    // Approximation simple pour les paths : on prend le point final du sous-segment
+                    let targetCmdIndex = Math.floor(ratio * seg.path.length);
+                    if(targetCmdIndex >= seg.path.length) targetCmdIndex = seg.path.length - 1;
+                    if(seg.path[targetCmdIndex] && seg.path[targetCmdIndex].length >= 3) {
+                         currentDotPos = {x: seg.path[targetCmdIndex][1], y: seg.path[targetCmdIndex][2]};
+                    }
+                } else if (seg.type === 'line' || isTravel) {
+                    currentDotPos = {
+                        x: seg.x1 + (seg.x2 - seg.x1) * ratio,
+                        y: seg.y1 + (seg.y2 - seg.y1) * ratio
+                    };
+                }
+
+                currentLength += seg.segmentLength; // On force à passer au Else
+            } 
+            else {
+                // Segment dans le futur, totalement caché
+                seg.set({ opacity: 0 });
             }
         });
+
+        // 3. Dessin des points SVG par-dessus le canevas HTML5 (Point Vert / Rouge)
+        let svgDots = '';
+        if (targetLength > 0 && startDotPos) {
+             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px;"></div>`;
+        }
+        if (currentDotPos) {
+             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px;"></div>`;
+        }
+        simOverlay.innerHTML = svgDots;
 
         canvas.renderAll();
     });
@@ -306,13 +390,11 @@ function setupSimulator() {
 function exportTHR() {
     if (!canvas) return;
 
-    // On prépare les données à envoyer à Python
     const exportData = {
         table: currentTable,
         drawing: canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage'])
     };
 
-    // On envoie au serveur Python (app.py) via fetch API
     fetch('/export-thr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -320,7 +402,7 @@ function exportTHR() {
     })
     .then(response => response.json())
     .then(data => {
-        alert(data.message); // Affiche le message de succès de Python
+        alert(data.message);
     })
     .catch(error => {
         console.error('Erreur:', error);
