@@ -1,242 +1,167 @@
-/* --- Variables globales pour les couleurs --- */
+/* --- 1. Reset & Variables --- */
 :root {
-    --bg-main: #0e1117;       /* Fond principal sombre */
-    --bg-card: #171d2b;       /* Bleu nuit pour les cartes */
-    --border-card: #2a3441;
-    --text-main: #ffffff;
-    --text-muted: #e2e8f0;
-    --accent-gold: #dfc391;   /* Doré pour les boutons */
-    --sand-color: #f4ebd8;    /* Couleur du sable */
-    --line-blue: #2980b9;
-    --line-red: #d32f2f;
+    --bg-color: #121418;       /* Fond sombre principal */
+    --panel-bg: #1A1D22;       /* Fond des panneaux/sections */
+    --accent-color: #2ECC71;   /* Vert Sunae pour les actions principales */
+    --text-color: #ECF0F1;     /* Texte clair */
+    --help-text-color: #BDC3C7; /* Texte d'aide grisé */
+    --border-color: #2C3E50;
 }
 
-/* --- Base --- */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
-    background-color: var(--bg-main);
-    color: var(--text-main);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 0;
-    padding: 20px;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    overflow: hidden; /* Empêche le défilement global */
 }
 
-hr {
-    border: 0;
-    border-top: 1px solid var(--border-card);
-    margin: 20px 0;
-}
-
-/* --- En-tête --- */
-.logo-container {
+/* --- 2. Structure Layout --- */
+#main-app {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Bannière Top */
+#top-banner {
+    display: flex;
     align-items: center;
-    margin-bottom: 10px;
-}
-.logo-container img {
-    max-width: 200px;
-    height: auto;
-}
-
-/* --- Sections d'étapes --- */
-.step-section {
-    display: none;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-.step-section.active {
-    display: block;
-}
-.section-title {
-    text-align: center;
-    margin-bottom: 30px;
-    font-weight: 600;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border-color);
 }
 
-/* --- Grille de cartes --- */
-.card-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 20px;
-    justify-content: center;
-}
+.active-module-title { font-size: 1.2rem; font-weight: bold; }
 
-.card {
-    background-color: var(--bg-card);
-    border-radius: 12px;
-    border: 1px solid var(--border-card);
+/* Panneau de Simulation */
+#simulation-panel {
+    background-color: var(--panel-bg);
     padding: 15px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-    text-align: center;
-    transition: transform 0.2s;
-}
-.card:hover {
-    transform: translateY(-5px);
-}
-.card img {
-    width: 100%;
-    border-radius: 8px;
-    margin-bottom: 15px;
-    object-fit: cover;
-}
-.card img.table-img {
-    width: 60%;
-    margin: 0 auto 15px auto;
-    display: block;
-}
-.card h3 {
-    margin-top: 0;
-    margin-bottom: 10px;
-}
-.card p {
-    color: var(--text-muted);
-    font-size: 0.9em;
-    margin-bottom: 20px;
-}
-
-/* --- Boutons --- */
-button {
-    background-color: transparent;
-    border: 1px solid var(--accent-gold);
-    color: var(--text-main);
-    border-radius: 6px;
-    padding: 8px 20px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    font-size: 1rem;
-}
-button:hover {
-    background-color: var(--accent-gold);
-    color: var(--bg-card);
-}
-.back-button {
-    margin-bottom: 20px;
-    font-size: 0.9rem;
-    padding: 5px 15px;
-}
-.primary-btn {
-    background-color: #ff4b4b;
-    border: none;
-    color: white;
-    width: 100%;
-    padding: 12px;
-    font-weight: bold;
-    margin-top: 20px;
-}
-.primary-btn:hover {
-    background-color: #ff3333;
-    color: white;
-}
-.upload-btn {
-    display: inline-block;
-    background-color: transparent;
-    border: 1px solid #555;
-    color: var(--text-main);
-    border-radius: 6px;
-    padding: 8px 15px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    margin-bottom: 15px;
+    border-bottom: 1px solid var(--border-color);
     text-align: center;
 }
-.upload-btn:hover {
-    background-color: #333;
-}
 
-/* --- Espace de travail --- */
-.workspace-header {
+.simulation-controls {
     display: flex;
     align-items: center;
-}
-.workspace-title {
-    margin: 0 auto;
-    font-size: 1.5rem;
-}
-.workspace-grid {
-    display: grid;
-    grid-template-columns: 1fr 3fr;
-    gap: 30px;
-    margin-top: 20px;
-}
-
-.tools-panel h3 {
-    margin-top: 0;
-    border-bottom: 1px solid var(--border-card);
-    padding-bottom: 10px;
-}
-.tool-group { margin-bottom: 20px; }
-.action-buttons {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-}
-.action-buttons button {
-    flex: 1;
-    font-size: 0.8rem;
-    padding: 5px;
-}
-.slider-group { margin-bottom: 15px; }
-.slider-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-}
-.slider-group input[type="range"] { width: 100%; }
-
-/* --- Le Canevas --- */
-.canvas-panel {
-    display: flex;
     justify-content: center;
-    align-items: flex-start;
+    gap: 15px;
 }
-#canvas-container {
-    background-color: var(--sand-color);
-    border: 4px dashed #bdc3c7;
-    position: relative;
-    overflow: hidden; /* COUPE LES COINS NOIRS */
-}
-.canvas-container { margin: 0 auto; }
 
-/* --- Le Slider Chrome --- */
-.simulator-section { text-align: center; }
-#bille-slider {
-    -webkit-appearance: none;
-    width: 100%;
-    height: 8px;
-    background: #d4c5b0;
-    border-radius: 4px;
-    outline: none;
-    box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4);
-    margin-top: 15px;
+/* Conteneur Workspace */
+#workspace-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden; /* Permet le scroll interne de la sidebar */
 }
-#bille-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 28px;
-    height: 28px;
+
+/* Sidebar Outils */
+#tool-sidebar {
+    width: 320px;
+    background-color: var(--panel-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto; /* Scroll si trop de contrôles */
+}
+
+.tool-section { padding: 20px; border-bottom: 1px solid var(--border-color); }
+.tool-section h2 { margin-bottom: 15px; font-size: 1.2rem; }
+
+/* Zone du Canevas */
+#canvas-panel {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background-color: var(--bg-color);
+}
+
+#canvas-container {
+    position: relative;
+    border: 3px dashed var(--accent-color);
     border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #ffffff 0%, #a9a9a9 30%, #404040 80%, #111111 100%);
-    box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5);
+    overflow: hidden;
+    /* Dimensions par défaut (Origin S) */
+    width: 600px; height: 600px;
+}
+
+/* --- 3. Composants Graphiques --- */
+button {
+    padding: 10px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
     cursor: pointer;
-}
-/* --- Les cases de texte Sunae --- */
-.sunae-letter-box {
-    position: absolute;
-    text-align: center;
-    font-family: 'Courier New', Courier, monospace;
     font-weight: bold;
-    font-size: 20px;
-    border: 1px solid #2980b9;
-    background: rgba(244, 235, 216, 0.9); /* Fond sable légèrement transparent */
-    color: #2c3e50;
-    pointer-events: auto; /* Permet de cliquer dessus malgré le conteneur */
-    box-sizing: border-box;
-    text-transform: uppercase;
+    transition: all 0.2s ease;
 }
-.sunae-letter-box:focus {
-    border: 2px solid #e74c3c;
-    background: #ffffff;
-    outline: none;
-    box-shadow: 0 0 10px rgba(231, 76, 60, 0.5);
+
+button:hover { border-color: var(--accent-color); background-color: rgba(46, 204, 113, 0.1); }
+
+.btn-primary { background-color: var(--accent-color); color: #FFF; border: none; width: 100%; margin-top: 10px; }
+.btn-primary:hover { background-color: #27AE60; }
+
+.btn-danger { color: #E74C3C; border-color: #E74C3C; margin-right: 5px;}
+.btn-danger:hover { background-color: rgba(231, 76, 60, 0.1); }
+
+.btn-warning { color: #F1C40F; border-color: #F1C40F; }
+.btn-warning:hover { background-color: rgba(241, 196, 15, 0.1); }
+
+/* Upload d'image de fond */
+.import-group input[type="file"] { display: none; }
+.btn-import {
+    display: inline-block;
+    padding: 10px 15px;
+    background-color: #FFF;
+    color: #121418;
+    border-radius: 5px;
+    font-weight: bold;
+    cursor: pointer;
+    width: 100%;
+    text-align: center;
 }
+
+/* Info Box Sunae */
+.info-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px;
+    background-color: #2C3E50;
+    border-radius: 5px;
+    margin: 10px 0;
+}
+.info-icon {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background-color: #3498DB;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; font-family: 'Courier New', monospace;
+}
+.info-box p { font-size: 0.85rem; color: var(--help-text-color); }
+
+/* Sliders et Inputs */
+.control-group { margin-bottom: 10px; }
+.control-group label { display: block; font-size: 0.9rem; color: var(--help-text-color); margin-bottom: 3px; }
+input[type="range"] { width: 100%; cursor: pointer; accent-color: var(--accent-color); }
+input[type="text"] {
+    width: 100%; padding: 10px;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    border-radius: 5px;
+}
+
+.help-text { font-size: 0.8rem; color: var(--help-text-color); margin: 10px 0; font-style: italic; }
+.canvas-actions { display: flex; gap: 5px; margin-top: 10px; justify-content: space-around; }
+
+/* Classes utilitaires pour le JS */
+.hidden { display: none !important; }
+.tool-section.active { display: block; }
+.tool-section:not(.active) { display: none; }
