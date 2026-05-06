@@ -16,39 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- STRUCTURE DE DONNÉES ULTRA-RAPIDE (MIN-HEAP) POUR LE ROUTAGE ---
-class MinHeap {
-    constructor() { this.data = []; }
-    push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
-    pop() {
-        if(this.data.length === 0) return null;
-        const top = this.data[0]; const bottom = this.data.pop();
-        if(this.data.length > 0) { this.data[0] = bottom; this.down(0); }
-        return top;
-    }
-    up(i) {
-        while(i > 0) {
-            let p = Math.floor((i-1)/2);
-            if(this.data[p].dist <= this.data[i].dist) break;
-            let tmp = this.data[i]; this.data[i] = this.data[p]; this.data[p] = tmp;
-            i = p;
-        }
-    }
-    down(i) {
-        let len = this.data.length;
-        while(true) {
-            let left = 2*i + 1, right = 2*i + 2, min = i;
-            if(left < len && this.data[left].dist < this.data[min].dist) min = left;
-            if(right < len && this.data[right].dist < this.data[min].dist) min = right;
-            if(min === i) break;
-            let tmp = this.data[i]; this.data[i] = this.data[min]; this.data[min] = tmp;
-            i = min;
-        }
-    }
-    isEmpty() { return this.data.length === 0; }
-}
-
-// --- HELPERS ---
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -56,7 +24,8 @@ function getYYMMDD() {
 
 function getGridText() {
     if (!currentTable || !TABLE_CFG[currentTable]) return "";
-    const cfg = TABLE_CFG[currentTable]; let text = "";
+    const cfg = TABLE_CFG[currentTable];
+    let text = "";
     for (let r = 0; r < cfg.rows.length; r++) {
         for (let c = 0; c < cfg.rows[r]; c++) {
             let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
@@ -166,7 +135,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP SANDIFY ---
+// --- MODULE SVG ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -191,6 +160,7 @@ if (svgUploadInput) {
     });
 }
 
+// --- ALGORITHME SANDIFY : EXTRACTION WYSIWYG + VRAI 2-OPT ---
 window.optimizeSVG = async function() {
     if(!currentSvgGroup) return;
 
@@ -205,24 +175,24 @@ window.optimizeSVG = async function() {
         pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
-    updateProgress(0, 'Extraction des tracés WYSIWYG...');
+    updateProgress(0, 'Extraction des tracés (WYSIWYG)...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let rawStrokes = [];
-    let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
-    if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
+    let objectsToProcess = currentSvgGroup._objects || [currentSvgGroup];
 
-    // 1. EXTRACTION PARFAITE (CORRECTION DU REDIMENSIONNEMENT)
-    // On prend la matrice exacte de l'objet sans double-multiplication
+    // 1. EXTRACTION PARFAITE (CORRECTION DU DÉCALAGE ET DE L'ÉCHELLE)
+    // En lisant directement la matrice absolue de chaque objet, on supprime la double échelle !
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
         let objMat = obj.calcTransformMatrix(); 
         
         if (obj.type === 'path') {
+            // Découpage propre des sous-chemins
             let subPaths = [];
             let currentPathCmds = [];
             obj.path.forEach(cmd => {
-                if (cmd[0] === 'M' && currentPathCmds.length > 0) {
+                if ((cmd[0] === 'M' || cmd[0] === 'm') && currentPathCmds.length > 0) {
                     subPaths.push(currentPathCmds);
                     currentPathCmds = [cmd];
                 } else {
@@ -276,11 +246,6 @@ window.optimizeSVG = async function() {
                 sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
             ]);
         }
-
-        if (i % 20 === 0) {
-            updateProgress(Math.floor((i / objectsToProcess.length) * 20), 'Extraction...');
-            await new Promise(r => setTimeout(r, 0));
-        }
     }
 
     if (rawStrokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
@@ -321,35 +286,43 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 3. 2-OPT (CORRECTIF DES LIGNES ROUGES CROISÉES)
-    updateProgress(50, 'Démêlage 2-Opt...');
+    // 3. 2-OPT (LE VRAI CORRECTIF DE SANDIFY POUR DEMELER LES LIGNES ROUGES)
+    updateProgress(50, 'Démêlage des tracés (2-Opt)...');
     await new Promise(r => setTimeout(r, 20));
 
     let improved = true;
     let passes = 0;
-    while(improved && passes < 10) { 
+    while(improved && passes < 15) { 
         improved = false;
         passes++;
         
-        for (let i = 1; i < optimized.length - 1; i++) {
-            for (let j = i + 1; j < optimized.length; j++) {
-                let end1 = optimized[i-1][optimized[i-1].length-1];
-                let start2 = optimized[i][0];
-                let end2 = optimized[j-1][optimized[j-1].length-1];
-                let start3 = optimized[j][0];
+        for (let i = 0; i < optimized.length - 1; i++) {
+            for (let k = i + 1; k < optimized.length; k++) {
+                let currEnd = optimized[i][optimized[i].length - 1];
+                let nextStart = optimized[i + 1][0];
+                let kEnd = optimized[k][optimized[k].length - 1];
+                let kNextStart = (k + 1 < optimized.length) ? optimized[k + 1][0] : null;
 
-                // On compare les VRAIES distances (pas au carré) pour que le choix soit géométriquement parfait
-                let currentTravel = dist(end1, start2) + dist(end2, start3);
-                let newTravel = dist(end1, end2) + dist(start2, start3);
+                // VRAIE Mathématique 2-Opt pour tracer les graphes ouverts
+                let d1 = dist(currEnd, nextStart);
+                let d2 = kNextStart ? dist(kEnd, kNextStart) : 0;
+                let currentTotal = d1 + d2;
 
-                if (newTravel < currentTravel - 0.001) {
-                    let reversedSegment = optimized.slice(i, j).reverse().map(s => s.slice().reverse());
-                    optimized.splice(i, j - i, ...reversedSegment);
+                let new_d1 = dist(currEnd, kEnd);
+                let new_d2 = kNextStart ? dist(nextStart, kNextStart) : 0;
+                let newTotal = new_d1 + new_d2;
+
+                if (newTotal < currentTotal - 0.001) {
+                    // On retourne l'ordre des traits ET les points à l'intérieur
+                    let subArray = optimized.slice(i + 1, k + 1);
+                    subArray.reverse();
+                    subArray.forEach(stroke => stroke.reverse());
+                    optimized.splice(i + 1, k - i, ...subArray);
                     improved = true;
                 }
             }
         }
-        updateProgress(50 + Math.min(40, passes * 4), 'Optimisation 2-Opt...');
+        updateProgress(50 + Math.min(40, passes * 3), 'Optimisation 2-Opt...');
         await new Promise(r => setTimeout(r, 0));
     }
 
@@ -403,18 +376,17 @@ function setupWorkspace(tableName, round, w, h) {
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
         let pathObj = e.path;
-        let offsetX = pathObj.left - pathObj.pathOffset.x;
-        let offsetY = pathObj.top - pathObj.pathOffset.y;
+        let objMat = pathObj.calcTransformMatrix();
         let absPoints = []; 
 
         for (let i = 0; i < pathObj.path.length; i++) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = sanitizeCoordinates(cmd[1] + offsetX, cmd[2] + offsetY, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y});
+                let p = fabric.util.transformPoint({x: cmd[1] - pathObj.pathOffset.x, y: cmd[2] - pathObj.pathOffset.y}, objMat);
+                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height));
             } else if (cmd[0] === 'Q') {
-                let p = sanitizeCoordinates(cmd[3] + offsetX, cmd[4] + offsetY, isRound, canvas.width, canvas.height);
-                absPoints.push({x: p.x, y: p.y}); 
+                let p = fabric.util.transformPoint({x: cmd[3] - pathObj.pathOffset.x, y: cmd[4] - pathObj.pathOffset.y}, objMat);
+                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height)); 
             }
         }
 
@@ -480,118 +452,41 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LE ROUTEUR SANDIFY (DIJKSTRA) POUR PASSER SUR LES TRAITS ---
-function getStrokeStart(s) { return s.sunaeAbsPoints ? s.sunaeAbsPoints[0] : null; }
-function getStrokeEnd(s) { return s.sunaeAbsPoints ? s.sunaeAbsPoints[s.sunaeAbsPoints.length-1] : null; }
+// --- LIGNES DE VOYAGE ---
+function getStrokeStart(stroke) {
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
+    return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
+}
+
+function getStrokeEnd(stroke) {
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1];
+    return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
+}
 
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
+
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    if(userStrokes.length < 2) { if (bgImageObj) bgImageObj.sendToBack(); canvas.renderAll(); return; }
-
-    // 1. On fabrique la "carte des routes" de tous les traits bleus
-    let allPoints = [];
-    userStrokes.forEach((stroke, sIdx) => {
-        if(!stroke.sunaeAbsPoints) return;
-        stroke.sunaeAbsPoints.forEach((pt, pIdx) => {
-            allPoints.push({x: pt.x, y: pt.y, sIdx: sIdx, pIdx: pIdx, id: allPoints.length});
-        });
-    });
-
-    let cellSize = 5; let grid = {};
-    allPoints.forEach(p => {
-        let key = Math.floor(p.x/cellSize) + ',' + Math.floor(p.y/cellSize);
-        if(!grid[key]) grid[key] = []; grid[key].push(p);
-    });
-
-    let adj = Array.from({length: allPoints.length}, () => []);
-    for(let i=0; i<allPoints.length; i++) {
-        let p1 = allPoints[i];
-        if(p1.pIdx < userStrokes[p1.sIdx].sunaeAbsPoints.length - 1) {
-            let p2 = allPoints[i+1]; let d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-            adj[p1.id].push({to: p2.id, weight: d}); adj[p2.id].push({to: p1.id, weight: d});
-        }
-        let gx = Math.floor(p1.x/cellSize), gy = Math.floor(p1.y/cellSize);
-        for(let dx=-1; dx<=1; dx++) {
-            for(let dy=-1; dy<=1; dy++) {
-                let key = (gx+dx) + ',' + (gy+dy);
-                if(grid[key]) {
-                    grid[key].forEach(p2 => {
-                        if(p1.id < p2.id) {
-                            let d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-                            // La tolérance magique : si les lignes se touchent à 2.5 pixels, on les relie !
-                            if(d <= 2.5) { adj[p1.id].push({to: p2.id, weight: d}); adj[p2.id].push({to: p1.id, weight: d}); }
-                        }
-                    });
-                }
-            }
-        }
-    }
-
-    function getClosestNode(pt) {
-        let closest = -1, minDist = Infinity;
-        let gx = Math.floor(pt.x/cellSize), gy = Math.floor(pt.y/cellSize);
-        for(let dx=-1; dx<=1; dx++) {
-            for(let dy=-1; dy<=1; dy++) {
-                let key = (gx+dx) + ',' + (gy+dy);
-                if(grid[key]) {
-                    grid[key].forEach(p => { let d = Math.hypot(pt.x - p.x, pt.y - p.y); if(d < minDist) { minDist = d; closest = p.id; } });
-                }
-            }
-        }
-        return closest;
-    }
-
-    // 2. On calcule les trous (Gaps) et on trouve le chemin le long des lignes
+    
     for (let i = 1; i < userStrokes.length; i++) {
         const prevEnd = getStrokeEnd(userStrokes[i - 1]);
         const currStart = getStrokeStart(userStrokes[i]);
-        if(!prevEnd || !currStart) continue;
 
-        let sId = getClosestNode(prevEnd); let eId = getClosestNode(currStart);
-        let travelPts = [prevEnd, currStart]; 
-
-        if(sId !== -1 && eId !== -1 && sId !== eId) {
-            let dist = new Float32Array(allPoints.length).fill(Infinity);
-            let prev = new Int32Array(allPoints.length).fill(-1);
-            dist[sId] = 0; let pq = new MinHeap(); pq.push(sId, 0);
-
-            while(!pq.isEmpty()) {
-                let curr = pq.pop(); let u = curr.id; let d = curr.dist;
-                if(u === eId) break;
-                if(d > dist[u]) continue;
-                for(let edge of adj[u]) {
-                    let v = edge.to; let nd = d + edge.weight;
-                    if(nd < dist[v]) { dist[v] = nd; prev[v] = u; pq.push(v, nd); }
-                }
-            }
-
-            if(dist[eId] < Infinity) {
-                // VICTOIRE : Un chemin a été trouvé sur les lignes bleues !
-                travelPts = []; let curr = eId;
-                while(curr !== -1) { travelPts.push({x: allPoints[curr].x, y: allPoints[curr].y}); curr = prev[curr]; }
-                travelPts.reverse();
-            }
-        } else if (sId === eId && sId !== -1) {
-            travelPts = [prevEnd]; // Les points se touchent déjà parfaitement
-        }
-
-        // On dessine le trajet. S'il a suivi les lignes bleues, la ligne rouge se posera par dessus.
-        if (travelPts.length > 1) {
-            let d = "M " + travelPts[0].x + " " + travelPts[0].y;
-            for(let j=1; j<travelPts.length; j++) d += " L " + travelPts[j].x + " " + travelPts[j].y;
-            const redLine = new fabric.Path(d, {
-                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], fill: '', opacity: 0.7,
-                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1, sunaeAbsPoints: travelPts
+        if (prevEnd && currStart) {
+            const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
+                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
+                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1,
+                sunaeAbsPoints: [prevEnd, currStart] // Indispensable pour la simulation
             });
-            canvas.add(redLine); redLine.sendToBack();
+            canvas.add(redLine);
+            redLine.sendToBack();
         }
     }
     if (bgImageObj) bgImageObj.sendToBack();
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ (POINT ROUGE FIXÉ) ---
+// --- LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
