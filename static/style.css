@@ -1,7 +1,6 @@
-
 /* --- Variables globales pour les couleurs --- */
 :root {
-    --bg-main: #0e1117;       /* Fond principal sombre (style Streamlit dark mode) */
+    --bg-main: #0e1117;       /* Fond principal sombre */
     --bg-card: #171d2b;       /* Bleu nuit pour les cartes */
     --border-card: #2a3441;
     --text-main: #ffffff;
@@ -41,7 +40,7 @@ hr {
 
 /* --- Sections d'étapes --- */
 .step-section {
-    display: none; /* Caché par défaut, géré par JS */
+    display: none;
     max-width: 1200px;
     margin: 0 auto;
 }
@@ -54,7 +53,7 @@ hr {
     font-weight: 600;
 }
 
-/* --- Grille de cartes (Étapes 1 et 2) --- */
+/* --- Grille de cartes --- */
 .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -62,7 +61,6 @@ hr {
     justify-content: center;
 }
 
-/* --- Design des cartes --- */
 .card {
     background-color: var(--bg-card);
     border-radius: 12px;
@@ -82,7 +80,7 @@ hr {
     object-fit: cover;
 }
 .card img.table-img {
-    width: 60%; /* Image plus petite pour l'étape 2 */
+    width: 60%;
     margin: 0 auto 15px auto;
     display: block;
 }
@@ -96,7 +94,7 @@ hr {
     margin-bottom: 20px;
 }
 
-/* --- Boutons standards --- */
+/* --- Boutons --- */
 button {
     background-color: transparent;
     border: 1px solid var(--accent-gold);
@@ -117,7 +115,7 @@ button:hover {
     padding: 5px 15px;
 }
 .primary-btn {
-    background-color: #ff4b4b; /* Rouge style Streamlit */
+    background-color: #ff4b4b;
     border: none;
     color: white;
     width: 100%;
@@ -139,12 +137,13 @@ button:hover {
     cursor: pointer;
     font-size: 0.9rem;
     margin-bottom: 15px;
+    text-align: center;
 }
 .upload-btn:hover {
     background-color: #333;
 }
 
-/* --- Espace de travail (Étape 3) --- */
+/* --- Espace de travail --- */
 .workspace-header {
     display: flex;
     align-items: center;
@@ -153,23 +152,19 @@ button:hover {
     margin: 0 auto;
     font-size: 1.5rem;
 }
-
 .workspace-grid {
     display: grid;
-    grid-template-columns: 1fr 3fr; /* Outils 1/4, Canevas 3/4 */
+    grid-template-columns: 1fr 3fr;
     gap: 30px;
     margin-top: 20px;
 }
 
-/* --- Panneau d'outils --- */
 .tools-panel h3 {
     margin-top: 0;
     border-bottom: 1px solid var(--border-card);
     padding-bottom: 10px;
 }
-.tool-group {
-    margin-bottom: 20px;
-}
+.tool-group { margin-bottom: 20px; }
 .action-buttons {
     display: flex;
     gap: 10px;
@@ -180,20 +175,16 @@ button:hover {
     font-size: 0.8rem;
     padding: 5px;
 }
-.slider-group {
-    margin-bottom: 15px;
-}
+.slider-group { margin-bottom: 15px; }
 .slider-group label {
     display: block;
     margin-bottom: 5px;
     font-size: 0.9rem;
     color: var(--text-muted);
 }
-.slider-group input[type="range"] {
-    width: 100%;
-}
+.slider-group input[type="range"] { width: 100%; }
 
-/* --- Le Canevas (Le sable) --- */
+/* --- Le Canevas --- */
 .canvas-panel {
     display: flex;
     justify-content: center;
@@ -203,23 +194,17 @@ button:hover {
     background-color: var(--sand-color);
     border: 4px dashed #bdc3c7;
     position: relative;
-    overflow: hidden; /* <-- LA SOLUTION MAGIQUE EST ICI */
+    overflow: hidden; /* COUPE LES COINS NOIRS */
 }
+.canvas-container { margin: 0 auto; }
 
-/* On s'assure que le canvas interne prend toute la place du conteneur */
-.canvas-container {
-    margin: 0 auto;
-}
-
-/* --- Le Slider Chrome (Bille) --- */
-.simulator-section {
-    text-align: center;
-}
+/* --- Le Slider Chrome --- */
+.simulator-section { text-align: center; }
 #bille-slider {
     -webkit-appearance: none;
     width: 100%;
     height: 8px;
-    background: #d4c5b0; /* Sillon sable */
+    background: #d4c5b0;
     border-radius: 4px;
     outline: none;
     box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4);
