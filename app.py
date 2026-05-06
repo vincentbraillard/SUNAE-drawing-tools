@@ -1,7 +1,6 @@
 import numpy as np
 import math
 import io
-import json
 import traceback
 from flask import Flask, render_template, request, send_file, jsonify
 
@@ -223,6 +222,13 @@ def export_thr():
         # ==============================================================
         elif module_name == "Dessin Libre":
             objects = data.get('drawing', {}).get('objects', [])
+            
+            # 1. On ignore les "isTravelLine" (traits rouges) pour éviter le bug du périmètre
+            user_strokes = [obj for obj in objects if obj.get('isUserStroke')]
+            
+            # 2. On trie par ordre chronologique strict
+            user_strokes.sort(key=lambda x: x.get('createdAt', 0))
+
             w, h = 600, 600
             if table_type == "Dimension S": w, h = 700, 350
             elif table_type == "Dimension L": w, h = 800, 400
@@ -231,27 +237,52 @@ def export_thr():
             max_radius = min(w, h) / 2.0
 
             all_norm_points = []
-            for obj in objects:
-                if obj.get('isUserStroke') or obj.get('isTravelLine'):
-                    if obj.get('type') == 'path':
-                        abs_points = obj.get('sunaeAbsPoints')
-                        if abs_points:
-                            for pt in abs_points:
-                                nx = (pt['x'] - center_x) / max_radius
-                                ny = (center_y - pt['y']) / max_radius
-                                all_norm_points.append((nx, ny))
-                    elif obj.get('type') == 'line':
-                        n_x1 = (obj.get('x1', 0) - center_x) / max_radius
-                        n_y1 = (center_y - obj.get('y1', 0)) / max_radius
-                        n_x2 = (obj.get('x2', 0) - center_x) / max_radius
-                        n_y2 = (center_y - obj.get('y2', 0)) / max_radius
-                        all_norm_points.extend([(n_x1, n_y1), (n_x2, n_y2)])
-
-            clean_points = []
-            for p in all_norm_points:
-                if not clean_points or clean_points[-1] != p: clean_points.append(p)
+            last_pt = None
             
-            for nx, ny in clean_points:
+            for obj in user_strokes:
+                stroke_pts = []
+                if obj.get('type') == 'path':
+                    path_arr = obj.get('path', [])
+                    offsetX = obj.get('left', 0) - obj.get('pathOffset', {}).get('x', 0)
+                    offsetY = obj.get('top', 0) - obj.get('pathOffset', {}).get('y', 0)
+                    for cmd in path_arr:
+                        if len(cmd) >= 3:
+                            px = cmd[-2] + offsetX
+                            py = cmd[-1] + offsetY
+                            nx = (px - center_x) / max_radius
+                            ny = (center_y - py) / max_radius # Inversion Y écran vers maths
+                            stroke_pts.append((nx, ny))
+                elif obj.get('type') == 'line':
+                    n_x1 = (obj.get('x1', 0) - center_x) / max_radius
+                    n_y1 = (center_y - obj.get('y1', 0)) / max_radius
+                    n_x2 = (obj.get('x2', 0) - center_x) / max_radius
+                    n_y2 = (center_y - obj.get('y2', 0)) / max_radius
+                    stroke_pts.extend([(n_x1, n_y1), (n_x2, n_y2)])
+
+                if stroke_pts:
+                    # Application du blocage (clamping) strict aux dimensions de la table
+                    clamped_stroke = []
+                    for nx, ny in stroke_pts:
+                        if cfg["is_round"]:
+                            mag = math.hypot(nx, ny)
+                            if mag > 1.0:
+                                nx, ny = nx/mag, ny/mag
+                        else:
+                            nx = max(-cfg["xmax"], min(nx, cfg["xmax"]))
+                            ny = max(-cfg["ymax"], min(ny, cfg["ymax"]))
+                        clamped_stroke.append((nx, ny))
+                    
+                    # 3. Le script trace lui-même la ligne droite entre deux dessins
+                    if last_pt is not None:
+                        travel = discretize_points([last_pt, clamped_stroke[0]])
+                        all_norm_points.extend(travel[1:]) 
+                        
+                    smooth_stroke = discretize_points(clamped_stroke)
+                    all_norm_points.extend(smooth_stroke)
+                    last_pt = smooth_stroke[-1]
+
+            # Conversion finale en Theta/Rho
+            for nx, ny in all_norm_points:
                 rho = min(math.hypot(nx, ny), 1.0) if cfg["is_round"] else math.hypot(nx, ny)
                 cumulative_theta = cart_to_sunae_angle(nx, ny, cumulative_theta)
                 raw_points.append((cumulative_theta, rho))
