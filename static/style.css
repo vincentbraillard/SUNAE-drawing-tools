@@ -1,4 +1,3 @@
-/* --- Variables globales pour les couleurs --- */
 :root {
     --bg-main: #0e1117;       
     --bg-card: #171d2b;       
@@ -11,14 +10,13 @@
     --line-red: #d32f2f;
 }
 
-/* --- Base --- */
 body {
     background-color: var(--bg-main);
     color: var(--text-main);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
     padding: 20px;
-    overflow-x: hidden; /* Empêche le défilement horizontal */
+    overflow-x: hidden; 
 }
 
 hr {
@@ -27,20 +25,17 @@ hr {
     margin: 20px 0;
 }
 
-/* --- En-tête --- */
 .logo-container {
     display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
 }
 .logo-container img { max-width: 200px; height: auto; }
 
-/* --- Sections d'étapes --- */
 .step-section {
     display: none; max-width: 1200px; margin: 0 auto;
 }
 .step-section.active { display: block; }
 .section-title { text-align: center; margin-bottom: 30px; font-weight: 600; }
 
-/* --- Grille de cartes --- */
 .card-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; justify-content: center;
 }
@@ -55,7 +50,6 @@ hr {
 .card h3 { margin-top: 0; margin-bottom: 10px; }
 .card p { color: var(--text-muted); font-size: 0.9em; margin-bottom: 20px; }
 
-/* --- Boutons --- */
 button {
     background-color: transparent; border: 1px solid var(--accent-gold); color: var(--text-main);
     border-radius: 6px; padding: 8px 20px; cursor: pointer; transition: all 0.3s ease; font-size: 1rem;
@@ -70,11 +64,9 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 .upload-btn:hover { background-color: #333; }
 
-/* --- Espace de travail --- */
 .workspace-header { display: flex; align-items: center; justify-content: space-between;}
 .workspace-title { font-size: 1.5rem; text-align: right;}
 
-/* UTILISATION DE FLEXBOX POUR PERMETTRE LE REPLI SUR MOBILE */
 .workspace-grid { 
     display: flex; 
     flex-direction: row; 
@@ -84,7 +76,16 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 
 .tools-panel { width: 300px; flex-shrink: 0; }
-.canvas-panel { flex-grow: 1; display: flex; justify-content: center; }
+
+.canvas-panel-scrollable {
+    flex-grow: 1;
+    width: 100%;
+}
+
+.canvas-panel { 
+    display: flex; 
+    justify-content: center; 
+}
 
 .tools-panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-card); padding-bottom: 10px; }
 .tool-group { margin-bottom: 20px; }
@@ -94,16 +95,13 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .slider-group label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: var(--text-muted); }
 .slider-group input[type="range"] { width: 100%; }
 
-/* --- Le Canevas --- */
 #canvas-container {
     background-color: var(--sand-color); 
     border: 4px dashed #bdc3c7; 
     position: relative; 
-    overflow: hidden; /* Empêche les éléments de dépasser du cadre */
-    /* La taille est fixée par le JS selon la table choisie */
+    overflow: hidden; 
 }
 
-/* --- Le Slider Chrome --- */
 .simulator-section { text-align: center; width: 100%; padding: 0 20px; box-sizing: border-box;}
 #bille-slider {
     -webkit-appearance: none; width: 100%; height: 8px; background: #d4c5b0; border-radius: 4px; outline: none; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4); margin-top: 15px;
@@ -114,7 +112,6 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
     box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.4), inset -2px -2px 4px rgba(0,0,0,0.5); cursor: pointer;
 }
 
-/* --- Les cases de texte Sunae --- */
 .sunae-letter-box {
     position: absolute; 
     text-align: center; 
@@ -138,53 +135,28 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 
 /* ========================================= */
-/* --- ADAPTATION MOBILE ET TABLETTE --- */
+/* --- ADAPTATION MOBILE (SANS TRANSFORM) --- */
 /* ========================================= */
 @media (max-width: 950px) {
-    /* Le canevas passe au-dessus des outils */
     .workspace-grid {
         flex-direction: column; 
         align-items: center;
-        gap: 15px;
+        gap: 20px;
     }
     
     .tools-panel { 
-        order: 2; /* En bas */
+        order: 2; /* Les outils passent en dessous */
         width: 100%; 
         max-width: 500px;
     }
     
-    .canvas-panel { 
-        order: 1; /* En haut */
-        width: 100%; 
-        /* On permet le scroll horizontal du conteneur parent 
-           au lieu de redimensionner le canevas lui-même */
-        overflow-x: auto; 
-        padding-bottom: 20px; /* Espace pour la scrollbar */
-        justify-content: flex-start; /* Aligne le canevas au début de la zone de scroll */
+    .canvas-panel-scrollable {
+        order: 1; /* Le dessin passe au dessus */
+        overflow-x: auto; /* PERMET DE SCROLLER SANS ÉCRASER L'IMAGE ! */
+        padding-bottom: 15px; /* Place pour la barre de scroll */
     }
 
-    /* Option de redimensionnement visuel (Transform Scale) 
-       pour faire rentrer la table ronde sur l'écran */
-    #canvas-container {
-        /* Transform origin en haut à gauche pour éviter les marges blanches bizarres */
-        transform-origin: top left;
-    }
-}
-
-/* Si l'écran est vraiment très petit (smartphones) */
-@media (max-width: 650px) {
-    body { padding: 10px; }
-    .workspace-header { flex-direction: column; align-items: flex-start; gap: 10px;}
-    .workspace-title { text-align: left; margin: 0; font-size: 1.2rem;}
-    
-    /* Échelle calculée pour la table Origin S (600px -> ~320px) */
-    #canvas-container {
-        transform: scale(0.55);
-        /* On doit forcer la réduction de hauteur/largeur de l'élément PARENT 
-           pour ne pas avoir un énorme espace vide sous le canevas. 
-           (600px * 0.55 = 330px) */
-        margin-bottom: -270px; 
-        margin-right: -270px;
+    .canvas-panel {
+        justify-content: flex-start; /* Aligne le dessin à gauche pour le scroll */
     }
 }
