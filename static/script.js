@@ -407,17 +407,17 @@ function setupSimulator() {
     });
 }
 
-// --- 7. EXPORTATION VERS FLASK ---
+// --- 7. EXPORTATION VERS FLASK (Avec téléchargement du fichier) ---
 window.exportTHR = function() {
     if (!canvas) return;
 
+    // On s'assure d'avoir tout le tracé
     document.getElementById('bille-slider').value = 100;
     document.getElementById('bille-slider').dispatchEvent(new Event('input'));
 
     const exportData = {
         table: currentTable,
         module: currentModule,
-        // On s'assure d'exporter aussi les textes (isSunaeText)
         drawing: canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'isSunaeText'])
     };
 
@@ -426,10 +426,25 @@ window.exportTHR = function() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exportData)
     })
-    .then(response => response.json())
-    .then(data => alert(data.message))
+    .then(response => {
+        if (!response.ok) throw new Error("Erreur serveur");
+        return response.blob(); // On récupère un FICHIER, pas du texte !
+    })
+    .then(blob => {
+        // Création magique du téléchargement dans le navigateur
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        // Nom du fichier généré
+        let safeModuleName = currentModule ? currentModule.replace(/\s+/g, '_') : 'Dessin';
+        a.download = `Sunae_${safeModuleName}.thr`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+    })
     .catch(error => {
         console.error('Erreur:', error);
-        alert("Erreur lors de la communication avec le serveur.");
+        alert("Erreur lors de la génération du fichier .THR.");
     });
 }
