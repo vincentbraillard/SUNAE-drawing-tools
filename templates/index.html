@@ -147,10 +147,13 @@
                     <button class="primary-btn" onclick="exportTHR()">💾 EXPORTER (.THR)</button>
                 </div>
 
-                <!-- Zone de dessin à droite -->
+               <!-- Zone de dessin à droite -->
                 <div class="canvas-panel">
-                    <div id="canvas-container">
+                    <div id="canvas-container" style="position: relative;">
+                        <!-- Le canevas de dessin (pour Dessin Libre) -->
                         <canvas id="sunae-canvas"></canvas>
+                        <!-- Le conteneur de la GRILLE DE TEXTE -->
+                        <div id="text-grid-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>
                     </div>
                 </div>
             </div>
