@@ -20,7 +20,6 @@ TABLE_CONFIGS = {
 def inject_global_css():
     st.markdown("""
     <style>
-    /* Masquer les menus par défaut de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -37,7 +36,7 @@ def inject_global_css():
         border-radius: 4px !important; box-shadow: inset 0px 2px 4px rgba(0,0,0,0.4) !important;
     }
     
-    /* CENTRAGE DU CANEVAS (Évite la déformation de la table) */
+    /* CENTRAGE DU CANEVAS */
     div[data-testid="stVerticalBlock"] > div:has(iframe), div[data-testid="stVerticalBlock"] > div:has(svg.sunae-canvas-frame) {
         display: flex; justify-content: center;
     }
@@ -65,10 +64,11 @@ def inject_global_css():
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. GESTION DE LA NAVIGATION ET MÉMOIRE ---
+# --- 4. GESTION NAVIGATION ET MÉMOIRE ---
 if 'step' not in st.session_state: st.session_state.step = 1
 if 'module' not in st.session_state: st.session_state.module = None
 if 'table' not in st.session_state: st.session_state.table = None
+
 if 'my_drawing' not in st.session_state: st.session_state.my_drawing = None
 if 'canvas_state' not in st.session_state: st.session_state.canvas_state = None
 if 'canvas_key' not in st.session_state: st.session_state.canvas_key = 0
@@ -93,7 +93,7 @@ def undo_last_stroke():
     if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
         if len(st.session_state.my_drawing["objects"]) > 0:
             st.session_state.my_drawing["objects"].pop()
-            st.session_state.canvas_state = st.session_state.my_drawing
+            st.session_state.canvas_state = st.session_state.my_drawing.copy()
             st.session_state.canvas_key += 1
 
 def reset_drawing():
@@ -101,11 +101,10 @@ def reset_drawing():
     st.session_state.canvas_state = None
     st.session_state.canvas_key += 1
 
-# --- IMAGE DE FOND (Intègre l'image uploadée ET les traits rouges pour le mode 100%) ---
-def get_bg_image_b64(uploaded_file, scale, angle, pan_x, pan_y, w, h, drawing_data):
-    base = Image.new("RGBA", (w, h), (244, 235, 216, 255)) # Fond Sable clair
+# --- GÉNÉRATION FOND SABLE (Avec contrôle des Lignes Rouges) ---
+def get_bg_image_b64(uploaded_file, scale, angle, pan_x, pan_y, w, h, drawing_data, draw_red_lines):
+    base = Image.new("RGBA", (w, h), (244, 235, 216, 255))
     
-    # 1. Gestion de l'image importée
     if uploaded_file is not None:
         try:
             img = Image.open(uploaded_file).convert("RGBA")
@@ -121,20 +120,20 @@ def get_bg_image_b64(uploaded_file, scale, angle, pan_x, pan_y, w, h, drawing_da
         except Exception:
             pass
 
-    # 2. Gestion des Traits Rouges (Visibles quand on dessine à 100%)
-    if drawing_data and "objects" in drawing_data:
+    # Les lignes rouges ne sont ajoutées à l'image de fond QUE si le curseur est à 100%
+    if draw_red_lines and drawing_data and "objects" in drawing_data:
         draw = ImageDraw.Draw(base)
         last_pt = None
         for obj in drawing_data["objects"]:
             if obj["type"] == "path":
                 start_pt = (obj["path"][0][1], obj["path"][0][2])
                 if last_pt is not None:
-                    draw.line([last_pt, start_pt], fill=(255, 0, 0, 255), width=2)
+                    draw.line([last_pt, start_pt], fill=(255, 0, 0, 180), width=2)
                 last_pt = (obj["path"][-1][-2], obj["path"][-1][-1])
             elif obj["type"] == "line":
                 start_pt = (obj['left']+obj['x1'], obj['top']+obj['y1'])
                 if last_pt is not None:
-                    draw.line([last_pt, start_pt], fill=(255, 0, 0, 255), width=2)
+                    draw.line([last_pt, start_pt], fill=(255, 0, 0, 180), width=2)
                 last_pt = (obj['left']+obj['x2'], obj['top']+obj['y2'])
 
     buffered = BytesIO()
@@ -144,16 +143,12 @@ def get_bg_image_b64(uploaded_file, scale, angle, pan_x, pan_y, w, h, drawing_da
 # --- 5. EXÉCUTION DE L'INTERFACE ---
 inject_global_css()
 
-# En-tête : Logo Sunae
 col_sp1, col_logo, col_sp2 = st.columns([1, 1, 1])
 with col_logo:
     try: st.image("2023_LOGO_SUNAE.png", use_container_width=True)
     except: st.markdown("<h1 style='text-align: center;'>SUNAE STUDIO</h1>", unsafe_allow_html=True)
 st.write("---")
 
-# ==========================================
-# ÉTAPE 1 : CHOIX DU MODULE
-# ==========================================
 if st.session_state.step == 1:
     st.markdown("<span class='step-marker'></span>", unsafe_allow_html=True)
     st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>1. Sélectionnez votre Expérience</h2>", unsafe_allow_html=True)
@@ -178,9 +173,6 @@ if st.session_state.step == 1:
         st.write("Transformez vos logos et motifs existants.")
         st.button("Choisir", key="btn_mod_svg", on_click=set_module, args=("Fichier SVG",), use_container_width=False)
 
-# ==========================================
-# ÉTAPE 2 : CHOIX DE LA TABLE
-# ==========================================
 elif st.session_state.step == 2:
     st.markdown("<span class='step-marker step2-marker'></span>", unsafe_allow_html=True)
     st.button("⬅ Retour aux expériences", on_click=reset_app)
@@ -206,9 +198,6 @@ elif st.session_state.step == 2:
         st.write("Rectangulaire - 1400x700mm")
         st.button("Choisir", key="btn_tab_ds", on_click=set_table, args=("Dimension S",), use_container_width=False)
 
-# ==========================================
-# ÉTAPE 3 : ESPACE DE TRAVAIL
-# ==========================================
 elif st.session_state.step == 3:
     cfg = TABLE_CONFIGS[st.session_state.table]
     w = cfg["canvas_w"]
@@ -229,17 +218,14 @@ elif st.session_state.step == 3:
         
         with col_tools:
             st.markdown("### Outils de Dessin")
-            # Disparition de la Gomme (Source de bugs)
             drawing_mode = st.radio("Mode :", ("✏️ Dessiner", "📏 Ligne Droite"))
             
-            # Boutons de correction
             c_btn1, c_btn2 = st.columns(2)
             c_btn1.button("↩ Étape Préc.", on_click=undo_last_stroke, use_container_width=True)
             c_btn2.button("🗑 Reset", on_click=reset_drawing, use_container_width=True)
             
             d_mode = "freedraw" if drawing_mode == "✏️ Dessiner" else "line"
             s_color = "#2980b9"
-            stroke_width = 3 # Épaisseur figée à 3
             
             st.markdown("---")
             st.markdown("### Image de fond")
@@ -254,30 +240,16 @@ elif st.session_state.step == 3:
 
         with col_canvas:
             
-            # --- CADRE TRAITILLÉ CSS AVEC IMAGE ---
-            bg_b64 = get_bg_image_b64(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h, st.session_state.my_drawing)
-            br = "50%" if cfg["is_round"] else "20px"
-            cadre_css = f"""<style>
-            iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
-                border: 4px dashed #bdc3c7 !important; 
-                border-radius: {br} !important;
-                background-color: transparent !important; 
-                background-image: url("data:image/png;base64,{bg_b64}") !important;
-                background-size: cover !important; background-position: center !important;
-                margin: 0 auto !important; display: block !important;
-                width: {w}px !important; height: {h}px !important;
-                max-width: {w}px !important; max-height: {h}px !important;
-            }}
-            </style>"""
-            st.markdown(cadre_css, unsafe_allow_html=True)
+            # Espace réservé pour injecter le CSS APRES la lecture du canevas
+            css_placeholder = st.empty()
             
             # --- MODE DESSIN (Slider = 100%) ---
             if slider_val == 100:
                 canvas_result = st_canvas(
                     fill_color="rgba(255, 165, 0, 0)",
-                    stroke_width=stroke_width,
+                    stroke_width=3,
                     stroke_color=s_color,
-                    background_color="rgba(0,0,0,0)", # Transparent (laisse voir le fond CSS et les traits rouges)
+                    background_color="rgba(0,0,0,0)",
                     height=h, width=w,
                     drawing_mode=d_mode,
                     initial_drawing=st.session_state.canvas_state,
@@ -285,12 +257,18 @@ elif st.session_state.step == 3:
                     key=f"canvas_sunae_{st.session_state.canvas_key}",
                 )
                 
-                # Enregistrement passif du dessin (Empêche la boucle infinie)
+                # Récupère instantanément le trait pour calculer la ligne rouge
                 if canvas_result.json_data is not None:
                     st.session_state.my_drawing = canvas_result.json_data
-            
-            # --- MODE SIMULATION (Animation Séquentielle Slider < 100%) ---
+                
+                # Génère le fond AVEC les lignes rouges calculées à l'instant
+                bg_b64 = get_bg_image_b64(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h, st.session_state.my_drawing, draw_red_lines=True)
+
+            # --- MODE SIMULATION ANIMÉE (Slider < 100%) ---
             else:
+                # Génère le fond SANS les lignes rouges (elles seront animées par-dessus)
+                bg_b64 = get_bg_image_b64(uploaded_file, bg_scale, bg_angle, bg_pan_x, bg_pan_y, w, h, st.session_state.my_drawing, draw_red_lines=False)
+                
                 svg_content = f'<svg class="sunae-canvas-frame" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
                 
                 if st.session_state.my_drawing and "objects" in st.session_state.my_drawing:
@@ -298,17 +276,15 @@ elif st.session_state.step == 3:
                     last_pt = None
                     start_dot = None
                     
-                    # 1. Analyse chronologique (On transforme Dessin ET Voyage en "Segments")
                     for obj in st.session_state.my_drawing["objects"]:
                         if obj["type"] == "path":
                             s_pt = (obj["path"][0][1], obj["path"][0][2])
                             e_pt = (obj["path"][-1][-2], obj["path"][-1][-1])
                             if start_dot is None: start_dot = s_pt
                             
-                            # Ajout du voyage rouge si ce n'est pas le 1er point
                             if last_pt is not None:
                                 dist = math.hypot(s_pt[0] - last_pt[0], s_pt[1] - last_pt[1])
-                                t_len = max(1, int(dist / 5)) # 1 "commande de temps" par 5 pixels
+                                t_len = max(1, int(dist / 5))
                                 segments.append({"type": "travel", "start": last_pt, "end": s_pt, "cmd_len": t_len})
                             
                             d_str = " ".join([ " ".join(map(str, cmd)) for cmd in obj["path"] ])
@@ -328,18 +304,15 @@ elif st.session_state.step == 3:
                             segments.append({"type": "line", "start": s_pt, "end": e_pt, "cmd_len": 2, "obj": obj})
                             last_pt = e_pt
                     
-                    # 2. Dessin des Segments selon le slider
                     if segments:
                         total_cmds = sum(seg["cmd_len"] for seg in segments)
                         cmds_to_draw = int((slider_val / 100.0) * total_cmds)
-                        
                         current_cmds = 0
                         current_end = None
                         
                         for seg in segments:
                             if current_cmds >= cmds_to_draw: break
                             
-                            # Segment Voyage (Ligne Rouge)
                             if seg["type"] == "travel":
                                 if current_cmds + seg["cmd_len"] <= cmds_to_draw:
                                     svg_content += f'<line x1="{seg["start"][0]}" y1="{seg["start"][1]}" x2="{seg["end"][0]}" y2="{seg["end"][1]}" stroke="red" stroke-width="2" />'
@@ -354,26 +327,24 @@ elif st.session_state.step == 3:
                                     current_end = (px, py)
                                     break
                                     
-                            # Segment Dessin (Ligne Bleue)
                             elif seg["type"] == "draw":
                                 color = seg["obj"].get("stroke", "#2980b9")
                                 if current_cmds + seg["cmd_len"] <= cmds_to_draw:
-                                    svg_content += f'<path d="{seg["d"]}" fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                                    svg_content += f'<path d="{seg["d"]}" fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
                                     current_end = seg["end"]
                                     current_cmds += seg["cmd_len"]
                                 else:
                                     rem = cmds_to_draw - current_cmds
                                     partial = seg["path"][:max(1, rem)]
                                     d_str = " ".join([ " ".join(map(str, cmd)) for cmd in partial ])
-                                    svg_content += f'<path d="{d_str}" fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                                    svg_content += f'<path d="{d_str}" fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
                                     current_end = (partial[-1][-2], partial[-1][-1])
                                     break
                                     
-                            # Ligne Droite (Ligne Bleue)
                             elif seg["type"] == "line":
                                 color = seg["obj"].get("stroke", "#2980b9")
                                 if current_cmds + seg["cmd_len"] <= cmds_to_draw:
-                                    svg_content += f'<line x1="{seg["start"][0]}" y1="{seg["start"][1]}" x2="{seg["end"][0]}" y2="{seg["end"][1]}" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round"/>'
+                                    svg_content += f'<line x1="{seg["start"][0]}" y1="{seg["start"][1]}" x2="{seg["end"][0]}" y2="{seg["end"][1]}" stroke="{color}" stroke-width="3" stroke-linecap="round"/>'
                                     current_end = seg["end"]
                                     current_cmds += seg["cmd_len"]
                                 else:
@@ -381,11 +352,10 @@ elif st.session_state.step == 3:
                                     ratio = rem / seg["cmd_len"]
                                     px = seg["start"][0] + (seg["end"][0] - seg["start"][0]) * ratio
                                     py = seg["start"][1] + (seg["end"][1] - seg["start"][1]) * ratio
-                                    svg_content += f'<line x1="{seg["start"][0]}" y1="{seg["start"][1]}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round"/>'
+                                    svg_content += f'<line x1="{seg["start"][0]}" y1="{seg["start"][1]}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="3" stroke-linecap="round"/>'
                                     current_end = (px, py)
                                     break
                         
-                        # Affichage du point vert et du point rouge
                         if cmds_to_draw > 0 and start_dot:
                             svg_content += f'<circle cx="{start_dot[0]}" cy="{start_dot[1]}" r="6" fill="#2ecc71"/>'
                         if current_end:
@@ -393,6 +363,22 @@ elif st.session_state.step == 3:
                 
                 svg_content += '</svg>'
                 st.markdown(svg_content, unsafe_allow_html=True)
-                
+            
+            # --- INJECTION CSS FINALE (Garantit 0 décalage) ---
+            br = "50%" if cfg["is_round"] else "20px"
+            cadre_css = f"""<style>
+            iframe[title="streamlit_drawable_canvas.st_canvas"], svg.sunae-canvas-frame {{
+                border: 4px dashed #bdc3c7 !important; 
+                border-radius: {br} !important;
+                background-color: transparent !important; 
+                background-image: url("data:image/png;base64,{bg_b64}") !important;
+                background-size: cover !important; background-position: center !important;
+                margin: 0 auto !important; display: block !important;
+                width: {w}px !important; height: {h}px !important;
+                max-width: {w}px !important; max-height: {h}px !important;
+            }}
+            </style>"""
+            css_placeholder.markdown(cadre_css, unsafe_allow_html=True)
+            
     else:
         st.warning(f"Le module '{st.session_state.module}' est en cours de portage vers le web.")
