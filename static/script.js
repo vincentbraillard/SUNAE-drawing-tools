@@ -42,6 +42,7 @@ function setupWorkspace(tableName, round, w, h) {
     container.style.width = w + 'px';
     container.style.height = h + 'px';
     container.style.borderRadius = isRound ? '50%' : '20px';
+    container.style.overflow = 'hidden'; // Force la coupure visuelle absolue
 
     canvas = new fabric.Canvas('sunae-canvas', {
         width: w,
@@ -49,6 +50,22 @@ function setupWorkspace(tableName, round, w, h) {
         isDrawingMode: true,
         selection: false
     });
+
+    // MASQUE DE DÉCOUPE : Dit à Fabric.js d'ignorer les coins !
+    if (isRound) {
+        canvas.clipPath = new fabric.Circle({
+            radius: w / 2,
+            originX: 'center', originY: 'center',
+            left: w / 2, top: h / 2
+        });
+    } else {
+        canvas.clipPath = new fabric.Rect({
+            width: w, height: h,
+            rx: 20, ry: 20,
+            originX: 'center', originY: 'center',
+            left: w / 2, top: h / 2
+        });
+    }
 
     canvas.freeDrawingBrush.color = '#2980b9';
     canvas.freeDrawingBrush.width = 3;
@@ -235,11 +252,10 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ (Au pixel près !) ---
+// --- 6. LE SIMULATEUR ANIMÉ (Découpage réel des traits) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     
-    // Ajout d'une div pour dessiner les points Vert/Rouge de la simulation
     let simOverlay = document.getElementById('sim-overlay');
     if (!simOverlay) {
         simOverlay = document.createElement('div');
@@ -249,136 +265,137 @@ function setupSimulator() {
         simOverlay.style.left = '0';
         simOverlay.style.width = '100%';
         simOverlay.style.height = '100%';
-        simOverlay.style.pointerEvents = 'none'; // Laisse passer les clics
+        simOverlay.style.pointerEvents = 'none';
+        
+        // Hérite de la bordure coupée du container !
+        simOverlay.style.borderRadius = isRound ? '50%' : '20px';
+        simOverlay.style.overflow = 'hidden';
+        
         document.getElementById('canvas-container').appendChild(simOverlay);
     }
     
     slider.addEventListener('input', function() {
         const percent = parseInt(this.value);
-        simOverlay.innerHTML = ''; // Efface les anciens points
+        simOverlay.innerHTML = '';
 
-        // Mode Dessin
+        const strokes = canvas.getObjects().filter(o => o.isUserStroke);
+        const travels = canvas.getObjects().filter(o => o.isTravelLine);
+
+        // --- RETOUR À 100% : ON RESTAURE TOUT ---
         if (percent === 100) {
             canvas.isDrawingMode = (drawMode === 'freedraw');
             canvas.getObjects().forEach(o => {
                 if (o.isUserStroke || o.isTravelLine) {
                     o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
-                    // On retire le "masquage" partiel
-                    if(o.strokeDashArray && o.isUserStroke) o.strokeDashArray = null; 
+                    // On restaure les chemins originaux
+                    if (o.type === 'path' && o.origPath) o.set({ path: o.origPath });
+                    if (o.type === 'line' && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
                 }
             });
             canvas.renderAll();
             return;
         }
 
-        // Mode Simulation
+        // --- MODE SIMULATION ---
         canvas.isDrawingMode = false;
         
-        const strokes = canvas.getObjects().filter(o => o.isUserStroke);
-        const travels = canvas.getObjects().filter(o => o.isTravelLine);
-        
         let allSegments = [];
+        for (let i = 0; i < strokes.length; i++) {
+            if (i > 0 && travels[i-1]) allSegments.push(travels[i-1]);
+            allSegments.push(strokes[i]);
+        }
+
         let totalLength = 0;
 
-        // 1. Calcul de la longueur totale de l'animation
-        for (let i = 0; i < strokes.length; i++) {
-            if (i > 0 && travels[i-1]) {
-                const tr = travels[i-1];
-                tr.segmentLength = Math.hypot(tr.x2 - tr.x1, tr.y2 - tr.y1);
-                totalLength += tr.segmentLength;
-                allSegments.push(tr);
+        // Préparation et Sauvegarde de l'état initial des traits
+        allSegments.forEach(seg => {
+            if (seg.type === 'path' && !seg.origPath) seg.origPath = seg.path;
+            if (seg.type === 'line' && seg.origX2 === undefined) {
+                seg.origX1 = seg.x1; seg.origY1 = seg.y1;
+                seg.origX2 = seg.x2; seg.origY2 = seg.y2;
             }
-            
-            const st = strokes[i];
-            // Calcul approximatif de la longueur d'un Path (si ce n'est pas une ligne droite)
-            let len = 0;
-            if (st.type === 'path') {
-                for(let j=1; j<st.path.length; j++) {
-                     let p1 = st.path[j-1];
-                     let p2 = st.path[j];
-                     if(p1.length >=3 && p2.length >=3) {
-                         len += Math.hypot(p2[1]-p1[1], p2[2]-p1[2]);
-                     }
-                }
-            } else if (st.type === 'line') {
-                len = Math.hypot(st.x2 - st.x1, st.y2 - st.y1);
+
+            // Calcul de la "longueur" temporelle du trait
+            if (seg.type === 'path') {
+                seg.segmentLength = seg.origPath.length; // Basé sur le nombre de points
+            } else if (seg.type === 'line') {
+                const dist = Math.hypot(seg.origX2 - seg.origX1, seg.origY2 - seg.origY1);
+                seg.segmentLength = Math.max(1, dist / 4); // Équilibré par rapport aux courbes
             }
-            // Si on n'arrive pas à calculer (très rare), on donne une valeur par défaut
-            st.segmentLength = len > 0 ? len : 50; 
-            totalLength += st.segmentLength;
-            
-            allSegments.push(st);
-        }
+            totalLength += seg.segmentLength;
+        });
 
         if (totalLength === 0) return;
 
-        // Longueur que la bille doit avoir parcourue au moment T du slider
         const targetLength = (percent / 100) * totalLength;
         let currentLength = 0;
         let currentDotPos = null;
         let startDotPos = null;
 
-        // 2. Affichage progressif ("Draw-on")
+        // Découpage et Animation
         allSegments.forEach((seg, index) => {
-            const isTravel = seg.isTravelLine;
             
-            // Si on récupère le premier point du premier segment
+            // Point de départ (Vert)
             if (index === 0) {
-                 if (seg.type === 'path') startDotPos = {x: seg.path[0][1], y: seg.path[0][2]};
-                 else if (seg.type === 'line') startDotPos = {x: seg.x1, y: seg.y1};
+                 if (seg.type === 'path') startDotPos = {x: seg.origPath[0][1], y: seg.origPath[0][2]};
+                 else if (seg.type === 'line') startDotPos = {x: seg.origX1, y: seg.origY1};
             }
 
+            // 1. Trait entièrement parcouru
             if (currentLength + seg.segmentLength <= targetLength) {
-                // Segment complètement affiché
-                seg.set({ opacity: (isTravel ? 0.7 : 1) });
-                if(!isTravel) seg.strokeDashArray = null; // Affiche tout
-                
-                // Maj position bille
-                if (seg.type === 'path') currentDotPos = {x: seg.path[seg.path.length-1][1], y: seg.path[seg.path.length-1][2]};
-                else if (seg.type === 'line') currentDotPos = {x: seg.x2, y: seg.y2};
-                
-                currentLength += seg.segmentLength;
-            } 
-            else if (currentLength < targetLength) {
-                // Segment PARTIELLEMENT affiché (La fameuse animation !)
-                const remainingLength = targetLength - currentLength;
-                
-                seg.set({ opacity: (isTravel ? 0.7 : 1) });
-                
-                // On utilise la magie de strokeDashArray pour masquer le "futur" du trait
-                seg.set('strokeDashArray', [remainingLength, seg.segmentLength]);
-                
-                // Calcul position approximative de la bille rouge sur ce segment
-                let ratio = remainingLength / seg.segmentLength;
-                if (seg.type === 'path') {
-                    // Approximation simple pour les paths : on prend le point final du sous-segment
-                    let targetCmdIndex = Math.floor(ratio * seg.path.length);
-                    if(targetCmdIndex >= seg.path.length) targetCmdIndex = seg.path.length - 1;
-                    if(seg.path[targetCmdIndex] && seg.path[targetCmdIndex].length >= 3) {
-                         currentDotPos = {x: seg.path[targetCmdIndex][1], y: seg.path[targetCmdIndex][2]};
-                    }
-                } else if (seg.type === 'line' || isTravel) {
-                    currentDotPos = {
-                        x: seg.x1 + (seg.x2 - seg.x1) * ratio,
-                        y: seg.y1 + (seg.y2 - seg.y1) * ratio
-                    };
-                }
+                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
+                if (seg.type === 'path') seg.set({ path: seg.origPath });
+                if (seg.type === 'line') seg.set({ x2: seg.origX2, y2: seg.origY2 });
 
-                currentLength += seg.segmentLength; // On force à passer au Else
-            } 
+                if (seg.type === 'path') {
+                    const lastCmd = seg.origPath[seg.origPath.length-1];
+                    currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
+                } else if (seg.type === 'line') {
+                    currentDotPos = {x: seg.origX2, y: seg.origY2};
+                }
+                currentLength += seg.segmentLength;
+            }
+            
+            // 2. Trait EN COURS de dessin (La découpe magique !)
+            else if (currentLength < targetLength) {
+                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
+                const remainingLength = targetLength - currentLength;
+                const ratio = remainingLength / seg.segmentLength;
+
+                if (seg.type === 'path') {
+                    // On ne garde que les 'N' premiers points du chemin !
+                    const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
+                    seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
+
+                    const lastCmd = seg.origPath[cmdsToShow - 1];
+                    if (lastCmd && lastCmd.length >= 3) {
+                        currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
+                    } else {
+                        currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
+                    }
+                } else if (seg.type === 'line') {
+                    // On modifie l'arrivée de la ligne pour qu'elle s'arrête au milieu
+                    const newX2 = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
+                    const newY2 = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
+                    seg.set({ x2: newX2, y2: newY2 });
+                    currentDotPos = {x: newX2, y: newY2};
+                }
+                currentLength += seg.segmentLength; 
+            }
+            
+            // 3. Trait dans le futur (Caché)
             else {
-                // Segment dans le futur, totalement caché
                 seg.set({ opacity: 0 });
             }
         });
 
-        // 3. Dessin des points SVG par-dessus le canevas HTML5 (Point Vert / Rouge)
+        // Affichage des points Vert (Départ) et Rouge (Bille)
         let svgDots = '';
         if (targetLength > 0 && startDotPos) {
-             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px;"></div>`;
+             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         }
         if (currentDotPos) {
-             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px;"></div>`;
+             svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
         }
         simOverlay.innerHTML = svgDots;
 
@@ -389,6 +406,10 @@ function setupSimulator() {
 // --- 7. EXPORTATION VERS FLASK ---
 function exportTHR() {
     if (!canvas) return;
+
+    // Pour l'exportation on remet tout à 100% temporairement pour récupérer les vrais tracés complets
+    document.getElementById('bille-slider').value = 100;
+    document.getElementById('bille-slider').dispatchEvent(new Event('input'));
 
     const exportData = {
         table: currentTable,
