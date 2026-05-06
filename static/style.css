@@ -1,3 +1,4 @@
+/* --- Variables globales pour les couleurs --- */
 :root {
     --bg-main: #0e1117;       
     --bg-card: #171d2b;       
@@ -10,6 +11,7 @@
     --line-red: #d32f2f;
 }
 
+/* --- Base --- */
 body {
     background-color: var(--bg-main);
     color: var(--text-main);
@@ -25,17 +27,20 @@ hr {
     margin: 20px 0;
 }
 
+/* --- En-tête --- */
 .logo-container {
     display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
 }
 .logo-container img { max-width: 200px; height: auto; }
 
+/* --- Sections d'étapes --- */
 .step-section {
     display: none; max-width: 1200px; margin: 0 auto;
 }
 .step-section.active { display: block; }
 .section-title { text-align: center; margin-bottom: 30px; font-weight: 600; }
 
+/* --- Grille de cartes --- */
 .card-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; justify-content: center;
 }
@@ -50,6 +55,7 @@ hr {
 .card h3 { margin-top: 0; margin-bottom: 10px; }
 .card p { color: var(--text-muted); font-size: 0.9em; margin-bottom: 20px; }
 
+/* --- Boutons --- */
 button {
     background-color: transparent; border: 1px solid var(--accent-gold); color: var(--text-main);
     border-radius: 6px; padding: 8px 20px; cursor: pointer; transition: all 0.3s ease; font-size: 1rem;
@@ -64,6 +70,7 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 .upload-btn:hover { background-color: #333; }
 
+/* --- Espace de travail --- */
 .workspace-header { display: flex; align-items: center; justify-content: space-between;}
 .workspace-title { font-size: 1.5rem; text-align: right;}
 
@@ -80,11 +87,8 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 .canvas-panel-scrollable {
     flex-grow: 1;
     width: 100%;
-}
-
-.canvas-panel { 
-    display: flex; 
-    justify-content: center; 
+    display: flex;
+    justify-content: center;
 }
 
 .tools-panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-card); padding-bottom: 10px; }
@@ -99,6 +103,7 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
     background-color: var(--sand-color); 
     border: 4px dashed #bdc3c7; 
     position: relative; 
+    flex-shrink: 0; /* GARANTIT QUE LA TABLE NE SERA JAMAIS ÉCRASÉE */
     overflow: hidden; 
 }
 
@@ -135,7 +140,7 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
 }
 
 /* ========================================= */
-/* --- ADAPTATION MOBILE (SANS TRANSFORM) --- */
+/* --- ADAPTATION MOBILE FLUIDE --- */
 /* ========================================= */
 @media (max-width: 950px) {
     .workspace-grid {
@@ -152,11 +157,8 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
     
     .canvas-panel-scrollable {
         order: 1; /* Le dessin passe au dessus */
-        overflow-x: auto; /* PERMET DE SCROLLER SANS ÉCRASER L'IMAGE ! */
-        padding-bottom: 15px; /* Place pour la barre de scroll */
-    }
-
-    .canvas-panel {
-        justify-content: flex-start; /* Aligne le dessin à gauche pour le scroll */
+        overflow-x: auto; /* Active le scroll horizontal avec le doigt */
+        justify-content: flex-start; /* Aligne la table à gauche pour commencer le scroll */
+        padding-bottom: 15px;
     }
 }
