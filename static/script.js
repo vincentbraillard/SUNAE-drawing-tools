@@ -171,12 +171,38 @@ function setupWorkspace(tableName, round, w, h) {
         if (currentModule !== 'Dessin Libre') return;
         
         let pathObj = e.path;
+        let offsetX = pathObj.left - pathObj.pathOffset.x;
+        let offsetY = pathObj.top - pathObj.pathOffset.y;
 
-        // On assigne simplement le statut, on NE TOUCHE PLUS du tout au tracé pour ne pas le décaler.
+        let absPoints = []; 
+
+        for (let i = 0; i < pathObj.path.length; i++) {
+            let cmd = pathObj.path[i];
+            if (cmd[0] === 'M' || cmd[0] === 'L') {
+                let relX = cmd[1] - pathObj.pathOffset.x;
+                let relY = cmd[2] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(relX, relY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                absPoints.push({x: p.x, y: p.y});
+            } else if (cmd[0] === 'Q') {
+                let crX = cmd[1] - pathObj.pathOffset.x;
+                let crY = cmd[2] - pathObj.pathOffset.y;
+                let cpt = fabric.util.transformPoint(new fabric.Point(crX, crY), pathObj.calcTransformMatrix());
+                let cp = sanitizeCoordinates(cpt.x, cpt.y, isRound, canvas.width, canvas.height);
+                
+                let rX = cmd[3] - pathObj.pathOffset.x;
+                let rY = cmd[4] - pathObj.pathOffset.y;
+                let pt = fabric.util.transformPoint(new fabric.Point(rX, rY), pathObj.calcTransformMatrix());
+                let p = sanitizeCoordinates(pt.x, pt.y, isRound, canvas.width, canvas.height);
+                absPoints.push({x: p.x, y: p.y}); 
+            }
+        }
+
         pathObj.set({
             selectable: false, 
             isUserStroke: true, 
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            sunaeAbsPoints: absPoints 
         });
         
         updateTravelLines();
@@ -222,38 +248,19 @@ function setupWorkspace(tableName, round, w, h) {
     if (currentModule === 'Texte Automatique') buildTextGrid();
 }
 
-// --- LECTURE ABSOLUE ET PRÉCISE POUR LE TRAIT ROUGE ---
-function getStrokePoint(cmd) {
-    if (cmd[0] === 'Q') return { x: cmd[3], y: cmd[4] };
-    return { x: cmd[1], y: cmd[2] };
-}
-
+// --- LECTURE ABSOLUE ET PRÉCISE POUR LE TRAIT ROUGE (CORRECTION ICI) ---
 function getStrokeStart(stroke) {
-    let x, y;
-    if (stroke.type === 'path') {
-        let offsetX = stroke.left - stroke.pathOffset.x;
-        let offsetY = stroke.top - stroke.pathOffset.y;
-        let pt = getStrokePoint(stroke.path[0]);
-        x = pt.x + offsetX;
-        y = pt.y + offsetY;
-    } else {
-        x = stroke.x1; y = stroke.y1;
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
+        return { x: stroke.sunaeAbsPoints[0].x, y: stroke.sunaeAbsPoints[0].y };
     }
-    return sanitizeCoordinates(x, y, isRound, canvas.width, canvas.height);
+    else return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
 }
 
 function getStrokeEnd(stroke) {
-    let x, y;
-    if (stroke.type === 'path') {
-        let offsetX = stroke.left - stroke.pathOffset.x;
-        let offsetY = stroke.top - stroke.pathOffset.y;
-        let pt = getStrokePoint(stroke.path[stroke.path.length - 1]);
-        x = pt.x + offsetX;
-        y = pt.y + offsetY;
-    } else {
-        x = stroke.x2; y = stroke.y2;
+    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
+        return { x: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].x, y: stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1].y };
     }
-    return sanitizeCoordinates(x, y, isRound, canvas.width, canvas.height);
+    else return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
 // --- 3. LOGIQUE DES LIGNES ROUGES ---
@@ -339,7 +346,7 @@ function setupBackgroundControls() {
     panYSlider.addEventListener('input', updateBgImage);
 }
 
-// --- 6. LE SIMULATEUR ANIMÉ ---
+// --- 6. LE SIMULATEUR ANIMÉ (CORRECTION ICI) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -423,13 +430,13 @@ function setupSimulator() {
                     const currentPath = seg.origPath.slice(0, cmdsToShow);
                     seg.set({ path: currentPath });
 
-                    const lastCmd = currentPath[cmdsToShow - 1];
-                    if (lastCmd && lastCmd.length >= 3) currentDotPos = {x: lastCmd[lastCmd.length-2], y: lastCmd[lastCmd.length-1]};
-                    else currentDotPos = {x: lastCmd[1], y: lastCmd[2]};
-                    
-                    const offsetX = seg.left - seg.pathOffset.x;
-                    const offsetY = seg.top - seg.pathOffset.y;
-                    currentDotPos = { x: currentDotPos.x + offsetX, y: currentDotPos.y + offsetY };
+                    // CORRECTION ICI : On utilise les points absolus en mémoire pour le point rouge
+                    if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
+                        const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
+                        currentDotPos = { x: seg.sunaeAbsPoints[targetIdx].x, y: seg.sunaeAbsPoints[targetIdx].y };
+                    } else {
+                        currentDotPos = getStrokeEnd(seg); 
+                    }
                     
                 } else if (seg.type === 'line' || seg.isTravelLine) {
                     const sx = seg.origX1 !== undefined ? seg.origX1 : seg.x1;
@@ -483,7 +490,7 @@ window.exportTHR = function() {
         document.getElementById('bille-slider').value = 100;
         document.getElementById('bille-slider').dispatchEvent(new Event('input'));
         
-        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt']);
+        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
     }
 
     fetch('/export-thr', {
