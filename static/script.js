@@ -16,7 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS ---
+// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -135,7 +135,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP (VRAI MOTEUR SANDIFY AVEC 2-OPT) ---
+// --- MODULE SVG ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -160,6 +160,7 @@ if (svgUploadInput) {
     });
 }
 
+// --- LE VRAI MOTEUR SANDIFY (TSP + 2-OPT CORRIGÉ) ---
 window.optimizeSVG = async function() {
     if(!currentSvgGroup) return;
 
@@ -174,17 +175,21 @@ window.optimizeSVG = async function() {
         pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
-    updateProgress(0, 'Analyse géométrique...');
+    updateProgress(0, 'Extraction des tracés...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let rawStrokes = [];
     let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    // 1. EXTRACTION DES POINTS (WYSIWYG Absolu)
+    // LA CORRECTION DE L'ÉCHELLE EST ICI :
+    // On utilise la matrice du groupe SVG * la matrice du chemin
+    // Résultat : Zéro décalage, WYSIWYG parfait.
+    let groupMatrix = currentSvgGroup.calcTransformMatrix();
+
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
-        let objMat = obj.calcTransformMatrix(); 
+        let objMat = fabric.util.multiplyTransformMatrices(groupMatrix, obj.calcTransformMatrix());
         
         if (obj.type === 'path') {
             let subPaths = [];
@@ -206,7 +211,7 @@ window.optimizeSVG = async function() {
                 let len = pathEl.getTotalLength();
                 if(len > 1) {
                     let pts = [];
-                    let step = 2; // Résolution optimale (2px)
+                    let step = 2; 
                     for(let l=0; l<=len; l+=step) {
                         let pt = pathEl.getPointAtLength(l);
                         let ptX = pt.x; let ptY = pt.y;
@@ -219,6 +224,7 @@ window.optimizeSVG = async function() {
                     if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                     pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                    
                     if(pts.length > 1) rawStrokes.push(pts);
                 }
             }
@@ -243,19 +249,21 @@ window.optimizeSVG = async function() {
                 sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
             ]);
         }
+
         if (i % 20 === 0) {
-            updateProgress(Math.floor((i / objectsToProcess.length) * 20), 'Lecture...');
+            updateProgress(Math.floor((i / objectsToProcess.length) * 20), 'Extraction...');
             await new Promise(r => setTimeout(r, 0));
         }
     }
 
     if (rawStrokes.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    updateProgress(20, 'Tri Initial (Nearest Neighbor)...');
+    updateProgress(20, 'Tri Initial...');
     await new Promise(r => setTimeout(r, 20));
 
-    // 2. PHASE 1 : PLUS PROCHE VOISIN (NEAREST NEIGHBOR)
-    function distSq(p1, p2) { return (p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y); }
+    // --- ALGORITHME TSP (Sandify) ---
+    // Fonction de distance linéaire corrigée !
+    function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
 
     let optimized = [];
     let unvisited = [...rawStrokes];
@@ -264,14 +272,15 @@ window.optimizeSVG = async function() {
     let totalStrokes = unvisited.length;
     let processedStrokes = 0;
 
+    // 1. NEAREST NEIGHBOR
     while(unvisited.length > 0) {
         let currEnd = optimized[optimized.length-1][optimized[optimized.length-1].length-1];
         let bestIdx = -1, bestDist = Infinity, reverse = false;
         
         for(let i=0; i<unvisited.length; i++) {
             let s = unvisited[i];
-            let dStart = distSq(s[0], currEnd);
-            let dEnd = distSq(s[s.length-1], currEnd);
+            let dStart = dist(s[0], currEnd);
+            let dEnd = dist(s[s.length-1], currEnd);
             if(dStart < bestDist) { bestDist = dStart; bestIdx = i; reverse = false; }
             if(dEnd < bestDist) { bestDist = dEnd; bestIdx = i; reverse = true; }
         }
@@ -287,62 +296,44 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 3. PHASE 2 : L'ALGORITHME 2-OPT (LE SECRET DE SANDIFY !)
-    updateProgress(50, 'Démêlage des lignes (2-Opt)...');
+    // 2. 2-OPT (LE CORRECTIF MAGIQUE DES LIGNES ROUGES)
+    updateProgress(50, 'Démêlage 2-Opt...');
     await new Promise(r => setTimeout(r, 20));
 
     let improved = true;
     let passes = 0;
-    while(improved && passes < 15) { // Max 15 passes pour ne pas bloquer éternellement
+    while(improved && passes < 10) { 
         improved = false;
         passes++;
         
-        // 3a. Vérification si inverser le sens d'un seul trait réduit le voyage
-        for(let i=1; i < optimized.length - 1; i++) {
-            let prevEnd = optimized[i-1][optimized[i-1].length-1];
-            let nextStart = optimized[i+1][0];
-            let currStart = optimized[i][0];
-            let currEnd = optimized[i][optimized[i].length-1];
+        for (let i = 1; i < optimized.length - 1; i++) {
+            for (let j = i + 1; j < optimized.length; j++) {
+                let end1 = optimized[i-1][optimized[i-1].length-1];
+                let start2 = optimized[i][0];
+                let end2 = optimized[j-1][optimized[j-1].length-1];
+                let start3 = optimized[j][0];
 
-            let distNormal = distSq(prevEnd, currStart) + distSq(currEnd, nextStart);
-            let distFlipped = distSq(prevEnd, currEnd) + distSq(currStart, nextStart);
+                // Ici, on utilise impérativement des distances LINEAIRES, pas au carré !
+                let currentTravel = dist(end1, start2) + dist(end2, start3);
+                let newTravel = dist(end1, end2) + dist(start2, start3);
 
-            if(distFlipped < distNormal - 0.001) {
-                optimized[i].reverse();
-                improved = true;
-            }
-        }
-
-        // 3b. L'échange 2-Opt classique : Démêle les lignes rouges qui se croisent
-        for (let i = 1; i < optimized.length - 2; i++) {
-            for (let j = i + 1; j < optimized.length - 1; j++) {
-                let prevEnd = optimized[i-1][optimized[i-1].length-1];
-                let currStart = optimized[i][0];
-                let nextEnd = optimized[j][optimized[j].length-1];
-                let afterStart = optimized[j+1][0];
-
-                let currentTravel = distSq(prevEnd, currStart) + distSq(nextEnd, afterStart);
-                let newTravel = distSq(prevEnd, nextEnd) + distSq(currStart, afterStart);
-
-                // Si croiser le chemin est plus court, on inverse tout le bloc !
                 if (newTravel < currentTravel - 0.001) {
-                    let reversedSegment = [];
-                    for(let k = j; k >= i; k--) reversedSegment.push([...optimized[k]].reverse());
-                    optimized.splice(i, j - i + 1, ...reversedSegment);
+                    let reversedSegment = optimized.slice(i, j).reverse().map(s => s.slice().reverse());
+                    optimized.splice(i, j - i, ...reversedSegment);
                     improved = true;
                 }
             }
         }
-        updateProgress(50 + Math.min(40, passes * 3), 'Optimisation 2-Opt...');
+        updateProgress(50 + Math.min(40, passes * 4), 'Optimisation 2-Opt...');
         await new Promise(r => setTimeout(r, 0));
     }
 
-    updateProgress(90, 'Génération du tracé...');
+    updateProgress(90, 'Génération du dessin...');
     await new Promise(r => setTimeout(r, 20));
 
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    // 4. DESSIN WYSIWYG
+    // 3. DESSIN SUR LE CANEVAS
     optimized.forEach((stroke, i) => {
         let d = "M " + stroke[0].x + " " + stroke[0].y;
         for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
@@ -464,7 +455,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (LIGNE DROITE COURTE) ---
+// --- LIGNES ROUGES : LIGNE DROITE PURE ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -498,7 +489,7 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ (MAGNÉTISÉ) ---
+// --- LE SIMULATEUR ANIMÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
