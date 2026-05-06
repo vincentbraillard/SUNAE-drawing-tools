@@ -16,7 +16,6 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- HELPERS : NOM DU FICHIER ---
 function getYYMMDD() {
     const d = new Date();
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -77,14 +76,12 @@ function goToStep(step, moduleName = null) {
             if (toolsTexte) toolsTexte.style.display = 'block';
             nameInput.value = ""; nameInput.placeholder = "Texte_Sunae";
             setTimeout(buildTextGrid, 50); 
-            
         } else if (currentModule === 'Dessin Libre') {
             if (simSection) simSection.style.display = 'block';
             if (bgSection) bgSection.style.display = 'block';
             if (toolsDessin) toolsDessin.style.display = 'block';
             nameInput.value = ""; nameInput.placeholder = getYYMMDD() + "_Freedrawing";
             if (canvas) { canvas.isDrawingMode = (drawMode === 'freedraw'); updateTravelLines(); }
-            
         } else if (currentModule === 'Fichier SVG') {
             if (simSection) simSection.style.display = 'block';
             if (toolsSvg) toolsSvg.style.display = 'block';
@@ -135,7 +132,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG & TSP (ASYNCHRONE HAUTE RÉSOLUTION ET ZERO DÉCALAGE) ---
+// --- MODULE SVG & TSP ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -151,6 +148,7 @@ if (svgUploadInput) {
                     originX: 'center', originY: 'center',
                     borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
                 });
+                // Échelle basique WYSIWYG
                 let scale = Math.min(canvas.width / currentSvgGroup.width, canvas.height / currentSvgGroup.height) * 0.8;
                 currentSvgGroup.scale(scale);
                 canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
@@ -174,86 +172,68 @@ window.optimizeSVG = async function() {
         pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)';
     }
 
-    updateProgress(0, 'Analyse Haute Définition...');
+    updateProgress(0, 'Analyse des tracés...');
     await new Promise(r => setTimeout(r, 50)); 
     
+    // METHODE SANDIFY PURE : On extrait les points ABSOLUS générés visuellement par Fabric.
     let rawStrokes = [];
     let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     if(currentSvgGroup.type === 'path') objectsToProcess = [currentSvgGroup];
 
-    // 1. LECTURE PARFAITE WYSIWYG
+    // On récupère la matrice exacte du groupe SVG tel qu'il est sur l'écran
+    let groupMatrix = currentSvgGroup.calcTransformMatrix();
+
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
         
-        // FIX #1: On utilise UNIQUEMENT la matrice de l'objet (qui inclut déjà celle du groupe)
-        let objMat = obj.calcTransformMatrix(); 
-        
-        if (obj.type === 'path') {
-            // FIX #2: Séparation correcte des sous-chemins (pour ne pas générer des milliers de mini-traits)
-            let subPaths = [];
-            let currentPathCmds = [];
-            
-            obj.path.forEach(cmd => {
-                if (cmd[0] === 'M' && currentPathCmds.length > 0) {
-                    subPaths.push(currentPathCmds);
-                    currentPathCmds = [cmd];
-                } else {
-                    currentPathCmds.push(cmd);
-                }
-            });
-            if(currentPathCmds.length > 0) subPaths.push(currentPathCmds);
+        // On combine la position du groupe + la position interne du trait
+        let objMat = fabric.util.multiplyTransformMatrices(groupMatrix, obj.calcTransformMatrix());
 
+        if (obj.type === 'path') {
             let svgNS = "http://www.w3.org/2000/svg";
+            let pathEl = document.createElementNS(svgNS, "path");
             
-            for(let sp of subPaths) {
-                let pathEl = document.createElementNS(svgNS, "path");
-                pathEl.setAttribute('d', sp.map(cmd => cmd.join(' ')).join(' '));
-                let len = pathEl.getTotalLength();
-                if(len > 1) {
-                    let pts = [];
-                    // Échantillonnage fluide et précis
-                    let step = 2; 
-                    for(let l=0; l<=len; l+=step) {
-                        let pt = pathEl.getPointAtLength(l);
-                        let ptX = pt.x; let ptY = pt.y;
-                        if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                        let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                        pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                    }
-                    let pt = pathEl.getPointAtLength(len);
+            // On recrée la ligne pour utiliser l'échantillonneur natif du navigateur (très précis)
+            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
+            let len = pathEl.getTotalLength();
+            
+            if(len > 1) {
+                let pts = [];
+                // Échantillonnage à 2 pixels pour garder de belles courbes sans faire exploser le processeur
+                let step = 2; 
+                for(let l=0; l<=len; l+=step) {
+                    let pt = pathEl.getPointAtLength(l);
+                    // On enlève le pathOffset interne de Fabric
                     let ptX = pt.x; let ptY = pt.y;
                     if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                    
+                    // On applique la matrice WYSIWYG
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                     pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                    
-                    if(pts.length > 1) rawStrokes.push(pts);
                 }
+                // Ne pas oublier le tout dernier point !
+                let pt = pathEl.getPointAtLength(len);
+                let ptX = pt.x; let ptY = pt.y;
+                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                
+                if(pts.length > 1) rawStrokes.push(pts);
             }
         }
         else if (obj.type === 'polygon' || obj.type === 'polyline') {
-            let pts = [];
-            obj.points.forEach(pt => {
+            let pts = obj.points.map(pt => {
                 let ptX = pt.x; let ptY = pt.y;
                 if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
                 let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                return sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
             });
             if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
             if (pts.length > 1) rawStrokes.push(pts);
         }
-        else if (obj.type === 'line') {
-            let p1x = obj.x1, p1y = obj.y1, p2x = obj.x2, p2y = obj.y2;
-            if (obj.pathOffset) { p1x -= obj.pathOffset.x; p1y -= obj.pathOffset.y; p2x -= obj.pathOffset.x; p2y -= obj.pathOffset.y; }
-            let t1 = fabric.util.transformPoint({x: p1x, y: p1y}, objMat);
-            let t2 = fabric.util.transformPoint({x: p2x, y: p2y}, objMat);
-            rawStrokes.push([
-                sanitizeCoordinates(t1.x, t1.y, isRound, canvas.width, canvas.height),
-                sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
-            ]);
-        }
 
         if (i % 20 === 0) {
-            updateProgress(Math.floor((i / objectsToProcess.length) * 40), 'Lecture traits...');
+            updateProgress(Math.floor((i / objectsToProcess.length) * 40), 'Lecture...');
             await new Promise(r => setTimeout(r, 0));
         }
     }
@@ -263,7 +243,7 @@ window.optimizeSVG = async function() {
     updateProgress(40, 'Calcul TSP...');
     await new Promise(r => setTimeout(r, 20));
 
-    // 2. TSP : CHEMIN LE PLUS COURT
+    // 2. ALGORITHME TSP CLASSIQUE SANDIFY (Nearest Neighbor)
     let optimized = [];
     let unvisited = [...rawStrokes];
     optimized.push(unvisited.shift());
@@ -271,6 +251,7 @@ window.optimizeSVG = async function() {
     let totalStrokes = unvisited.length;
     let processedStrokes = 0;
 
+    // Calcul de distance au carré pour la vitesse extrême
     function distSq(p1, p2) { return (p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y); }
 
     while(unvisited.length > 0) {
@@ -296,9 +277,10 @@ window.optimizeSVG = async function() {
         }
     }
 
-    updateProgress(90, 'Génération...');
+    updateProgress(90, 'Génération du dessin...');
     await new Promise(r => setTimeout(r, 20));
 
+    // On efface le SVG d'origine, on va dessiner par-dessus !
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
     // 3. DESSIN WYSIWYG
@@ -343,11 +325,14 @@ function setupWorkspace(tableName, round, w, h) {
 
     canvas.freeDrawingBrush.color = '#2980b9'; canvas.freeDrawingBrush.width = 3;
 
+    // RETOUR DU CODE 100% FONCTIONNEL POUR LE DESSIN LIBRE
     canvas.on('path:created', function(e) {
         if (currentModule !== 'Dessin Libre') return;
+        
         let pathObj = e.path;
         let offsetX = pathObj.left - pathObj.pathOffset.x;
         let offsetY = pathObj.top - pathObj.pathOffset.y;
+
         let absPoints = []; 
 
         for (let i = 0; i < pathObj.path.length; i++) {
@@ -423,7 +408,7 @@ function setupBackgroundControls() {
     });
 }
 
-// LECTURE DIRECTE DANS LA MÉMOIRE (ZERO DECALAGE)
+// --- LIGNES ROUGES : LIGNE DROITE PURE ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) {
         return stroke.sunaeAbsPoints[0];
@@ -438,7 +423,6 @@ function getStrokeEnd(stroke) {
     return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
 }
 
-// --- LIAISON EN LIGNE DROITE (LE STANDARD SANDIFY) ---
 function updateTravelLines() {
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
 
@@ -449,11 +433,12 @@ function updateTravelLines() {
         const currStart = getStrokeStart(userStrokes[i]);
 
         if (prevEnd && currStart) {
-            // FIX #3: Ligne droite pure, le TSP se charge de minimiser la distance !
+            // Ligne droite simple : plus de bugs de bounding box. 
+            // C'est propre, direct, et l'export THR marchera parfaitement.
             const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
                 stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
                 selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1,
-                sunaeAbsPoints: [prevEnd, currStart] // Indispensable pour que la bille suive le trait
+                sunaeAbsPoints: [prevEnd, currStart] // Indispensable pour la simulation
             });
             canvas.add(redLine);
             redLine.sendToBack();
@@ -463,7 +448,7 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ ---
+// --- LE SIMULATEUR ANIMÉ (MAGNÉTISÉ) ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
