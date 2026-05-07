@@ -5,6 +5,7 @@ let currentModule = null;
 let isRound = false;
 let globalNativeStrokes = null; 
 
+// --- VERROU MATHÉMATIQUE ---
 const tableWidth = 600;
 const tableHeight = 600;
 
@@ -14,6 +15,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, aspect: 1900.0 / 900.0 }
 };
 
+// --- DIJKSTRA MIN-HEAP ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -45,6 +47,25 @@ class MinHeap {
     isEmpty() { return this.data.length === 0; }
 }
 
+// --- FONCTIONS DE NAVIGATION (RÉPARÉES) ---
+function goToStep(step, moduleName = null) {
+    document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
+    const target = document.getElementById('step-' + step);
+    if(target) target.classList.add('active');
+    
+    if (moduleName) {
+        currentModule = moduleName;
+        document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
+        document.getElementById('module-workspace').style.display = 'block';
+        
+        // Cacher/Montrer les outils spécifiques
+        document.getElementById('tools-svg').style.display = (moduleName === 'Fichier SVG') ? 'block' : 'none';
+        
+        if (canvas) { canvas.clear(); }
+    }
+}
+
+// --- EXTRACTION NATIVE DU SVG (ZÉRO TRAIT PARASITE) ---
 function extractSVGData(svgString) {
     let container = document.createElement('div');
     container.style.position = 'absolute'; container.style.visibility = 'hidden';
@@ -69,7 +90,7 @@ function extractSVGData(svgString) {
             pathData = 'M ' + pts + (el.tagName.toLowerCase() === 'polygon' ? ' Z' : '');
         }
 
-        // DÉCOUPAGE STRICT : On casse le trait à chaque 'M' pour éviter les liaisons bleues
+        // COUPE STRICTE SUR LES MOVE-TO
         let segments = pathData.split(/[Mm]/);
         segments.forEach(seg => {
             if(!seg.trim()) return;
@@ -98,22 +119,26 @@ function extractSVGData(svgString) {
     })));
 }
 
+// --- CHARGEMENT ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
         const reader = new FileReader();
         reader.onload = function(f) {
             globalNativeStrokes = extractSVGData(f.target.result);
-            canvas.clear();
-            globalNativeStrokes.forEach(s => {
-                canvas.add(new fabric.Polyline(s, { fill:null, stroke:'#9b59b6', strokeWidth:2, opacity:0.4, selectable:false }));
-            });
-            canvas.renderAll();
+            if(canvas) {
+                canvas.clear();
+                globalNativeStrokes.forEach(s => {
+                    canvas.add(new fabric.Polyline(s, { fill:null, stroke:'#9b59b6', strokeWidth:2, opacity:0.4, selectable:false }));
+                });
+                canvas.renderAll();
+            }
         };
         reader.readAsText(e.target.files[0]);
     });
 }
 
+// --- MOTEUR DE CALCUL ---
 window.optimizeSVG = async function() {
     if(!globalNativeStrokes) return;
     const btn = document.getElementById('btn-optimize-svg');
@@ -216,7 +241,7 @@ window.optimizeSVG = async function() {
     for(let i=0; i<path.length-1; i++) {
         let u = path[i], v = path[i+1];
         let e = edges.find(e => !e.rendered && ((e.u===u && e.v===v) || (e.v===u && e.u===v)));
-        if(e) e.rendered = true;
+        if(edge) edge.rendered = true;
         let isRed = e ? e.isBridge : false;
         canvas.add(new fabric.Line([nodes[u].x, nodes[u].y, nodes[v].x, nodes[v].y], {
             stroke: isRed ? 'red' : '#2980b9', strokeWidth: isRed ? 2 : 3, selectable: false,
@@ -231,6 +256,7 @@ window.optimizeSVG = async function() {
     btn.disabled = false; canvas.renderAll();
 };
 
+// --- INITIALISATION ---
 function setupWorkspace(tableName, round) {
     currentTable = tableName; isRound = round;
     const aspect = TABLE_CFG[tableName].aspect;
@@ -238,5 +264,7 @@ function setupWorkspace(tableName, round) {
     if (canvas) canvas.dispose();
     canvas = new fabric.Canvas('sunae-canvas', { width: tableWidth, height: h, enableRetinaScaling: false, selection: false });
     document.getElementById('canvas-container').style.maxWidth = tableWidth + 'px';
-    document.getElementById('module-workspace').style.display = 'block';
+    
+    // Aller à l'étape du choix de module
+    goToStep(2);
 }
