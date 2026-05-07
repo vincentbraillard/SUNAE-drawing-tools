@@ -16,7 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA (Ultra-rapide) ---
+// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -212,7 +212,6 @@ window.optimizeSVG = async function() {
     function addNode(p) {
         let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
-        
         for(let key of keys) {
             if(spatialGrid.has(key)) {
                 for(let n of spatialGrid.get(key)) {
@@ -234,9 +233,7 @@ window.optimizeSVG = async function() {
         if (u === v) return;
         let d = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y);
         let edge = { u: u, v: v, d: d, isBridge: isBridge, isDuplicate: isDuplicate, used: false, rendered: false };
-        nodes[u].adj.push(edge);
-        nodes[v].adj.push(edge);
-        edges.push(edge);
+        nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
     }
 
     for(let i=0; i<objectsToProcess.length; i++) {
@@ -272,12 +269,6 @@ window.optimizeSVG = async function() {
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                     pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
                 }
-                let pt = pathEl.getPointAtLength(len);
-                let ptX = pt.x; let ptY = pt.y;
-                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
-                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
-                
                 processPathSegment(pts);
             }
         }
@@ -308,7 +299,7 @@ window.optimizeSVG = async function() {
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    // --- 2. KRUSKAL ---
+    // --- 2. KRUSKAL (Connexion absolue entre zones séparées) ---
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -358,7 +349,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // --- 3. EULERIZE (Dijkstra pour repasser sur les traits existants) ---
+    // --- 3. EULERIZE (Dijkstra pour repasser sur les traits) ---
     updateProgress(50, 'Routage sur traits (Postier Chinois)...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -416,17 +407,23 @@ window.optimizeSVG = async function() {
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 20));
 
-    // LE VOICI ! Le tri qui oblige la bille à finir une zone avant de sauter ailleurs.
+    let adjTr = Array.from({length: nodes.length}, () => []);
+    edges.forEach((e, idx) => {
+        e.used = false;
+        adjTr[e.u].push({to: e.v, edgeIdx: idx, dir: 1});
+        adjTr[e.v].push({to: e.u, edgeIdx: idx, dir: -1});
+    });
+
+    // LA FONCTION DE TRI : Priorité absolue au dessin original !
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on les garde pour la fin)
-        if (e.isDuplicate) return 2;    // Repassage invisible (Choix moyen)
+        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on le laisse pour la fin de la zone)
+        if (e.isDuplicate) return 2;    // Repassage (Choix moyen)
         return 3;                       // Vrais traits bleus du dessin (Meilleur choix, on fonce dessus)
     }
 
     for(let i=0; i<nodes.length; i++) {
-        // On trie de manière DÉCROISSANTE (3 puis 2 puis 1).
-        // Dans la boucle ci-dessous, on prendra toujours l'index 0 en priorité.
-        nodes[i].adj.sort((a, b) => getEdgeScore(b) - getEdgeScore(a)); 
+        // Tri croissant pour que le pop() (qui prend le dernier élément) prenne la valeur maximale (3)
+        adjTr[i].sort((a, b) => getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx])); 
     }
 
     let startNode = 0;
@@ -438,17 +435,18 @@ window.optimizeSVG = async function() {
     while(stack.length > 0) {
         let u = stack[stack.length - 1];
         let nextEdge = null;
-        for(let i=0; i<nodes[u].adj.length; i++) {
-            if(!nodes[u].adj[i].used) {
-                nextEdge = nodes[u].adj[i]; // Prend le meilleur score grâce au tri !
+        
+        // Prend toujours le meilleur score (fin de tableau)
+        for(let i=adjTr[u].length - 1; i >= 0; i--) {
+            if(!edges[adjTr[u][i].edgeIdx].used) {
+                nextEdge = adjTr[u][i]; 
                 break;
             }
         }
         
         if(nextEdge) {
-            nextEdge.used = true;
-            let v = (nextEdge.u === u) ? nextEdge.v : nextEdge.u;
-            stack.push(v);
+            edges[nextEdge.edgeIdx].used = true;
+            stack.push(nextEdge.to);
         } else {
             nodePath.push(stack.pop());
         }
@@ -518,21 +516,37 @@ window.resetSVG = function() {
 }
 
 // --- INITIALISATION DU CANEVAS ---
-function setupWorkspace(tableName, round, w, h) {
+function setupWorkspace(tableName, round, w_param, h_param) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
 
+    // --- LE SECRET DE LA LARGEUR BLOQUÉE ---
+    // Peu importe l'écran, on force une matrice mathématique interne fixe (ex: 600px).
+    // Cela garantit un rendu et un calcul absolus et identiques sur Mobile et Ordi.
+    const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
+    let fixedW = 600;
+    let fixedH = round ? 600 : fixedW / aspect;
+
     if (canvas) canvas.dispose();
     const container = document.getElementById('canvas-container');
-    container.style.width = w + 'px'; container.style.height = h + 'px';
+    
+    // Le CSS s'occupera d'adapter visuellement à la taille de l'écran, 
+    // mais le canevas restera mathématiquement bloqué à 600px.
+    container.style.width = '100%';
+    container.style.maxWidth = fixedW + 'px';
+    container.style.height = 'auto';
+    container.style.aspectRatio = round ? '1 / 1' : `${fixedW} / ${fixedH}`;
     container.style.borderRadius = isRound ? '50%' : '20px';
 
     canvas = new fabric.Canvas('sunae-canvas', {
-        width: w, height: h, isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), selection: false
+        width: fixedW, 
+        height: fixedH, 
+        isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
+        selection: false
     });
 
-    if (isRound) canvas.clipPath = new fabric.Circle({ radius: w / 2, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
-    else canvas.clipPath = new fabric.Rect({ width: w, height: h, rx: 20, ry: 20, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+    if (isRound) canvas.clipPath = new fabric.Circle({ radius: fixedW / 2, originX: 'center', originY: 'center', left: fixedW / 2, top: fixedH / 2 });
+    else canvas.clipPath = new fabric.Rect({ width: fixedW, height: fixedH, rx: 20, ry: 20, originX: 'center', originY: 'center', left: fixedW / 2, top: fixedH / 2 });
 
     canvas.freeDrawingBrush.color = '#2980b9'; canvas.freeDrawingBrush.width = 3;
 
@@ -614,7 +628,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
