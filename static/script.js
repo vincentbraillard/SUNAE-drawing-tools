@@ -3,26 +3,19 @@ let canvas = null;
 let currentTable = null;
 let currentModule = null;
 let isRound = false;
-let drawMode = 'freedraw'; 
+let globalNativeStrokes = null; // Données géométriques pures
 
-let isDrawingLine = false;
-let tempLine = null;
-let bgImageObj = null;
-
-let globalSvgString = null; 
-let globalNativeStrokes = null; // Stocke les données mathématiques pures !
-
-// --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
-let tableWidth = 600;
-let tableHeight = 600;
+// --- VERROU MATHÉMATIQUE ---
+const tableWidth = 600;
+const tableHeight = 600;
 
 const TABLE_CFG = {
-    "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
-    "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
-    "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
+    "Origin S": { round: true, aspect: 1.0 },
+    "Dimension S": { round: false, aspect: 1300.0 / 600.0 },
+    "Dimension L": { round: false, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA ---
+// --- DIJKSTRA MIN-HEAP ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -54,832 +47,242 @@ class MinHeap {
     isEmpty() { return this.data.length === 0; }
 }
 
-// --- HELPERS ---
-function getYYMMDD() {
-    const d = new Date();
-    return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-}
-
-function getGridText() {
-    if (!currentTable || !TABLE_CFG[currentTable]) return "";
-    const cfg = TABLE_CFG[currentTable]; let text = "";
-    for (let r = 0; r < cfg.rows.length; r++) {
-        for (let c = 0; c < cfg.rows[r]; c++) {
-            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
-            if (input && input.value && input.value.trim() !== "") text += input.value.trim();
-        }
-    }
-    return text;
-}
-
-function sanitizeCoordinates(x, y, round, w, h) {
-    if (round) {
-        const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
-        const dx = x - cx; const dy = y - cy; const dist = Math.hypot(dx, dy);
-        if (dist > radius) return { x: cx + (radius * dx / dist), y: cy + (radius * dy / dist) };
-        return { x, y };
-    } else {
-        const margin = 2;
-        return { x: Math.max(margin, Math.min(w - margin, x)), y: Math.max(margin, Math.min(h - margin, y)) };
-    }
-}
-
-function goToStep(step, moduleName = null) {
-    document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
-    document.getElementById('step-' + step).classList.add('active');
-    
-    if (moduleName) {
-        currentModule = moduleName;
-        document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
-        document.getElementById('module-workspace').style.display = 'block';
-
-        const simSection = document.getElementById('simulation-section');
-        const bgSection = document.getElementById('background-section');
-        const toolsDessin = document.getElementById('tools-dessin');
-        const toolsTexte = document.getElementById('tools-texte');
-        const toolsSvg = document.getElementById('tools-svg');
-        const gridContainer = document.getElementById('text-grid-container');
-        const nameInput = document.getElementById('export-filename');
-
-        if (simSection) simSection.style.display = 'none';
-        if (bgSection) bgSection.style.display = 'none';
-        if (toolsDessin) toolsDessin.style.display = 'none';
-        if (toolsTexte) toolsTexte.style.display = 'none';
-        if (toolsSvg) toolsSvg.style.display = 'none';
-        if (gridContainer) gridContainer.innerHTML = ''; 
-        if (canvas) { canvas.isDrawingMode = false; canvas.clear(); }
-
-        if (currentModule === 'Texte Automatique') {
-            if (toolsTexte) toolsTexte.style.display = 'block';
-            nameInput.value = ""; nameInput.placeholder = "Texte_Sunae";
-            setTimeout(buildTextGrid, 50); 
-        } else if (currentModule === 'Dessin Libre') {
-            if (simSection) simSection.style.display = 'block';
-            if (bgSection) bgSection.style.display = 'block';
-            if (toolsDessin) toolsDessin.style.display = 'block';
-            nameInput.value = ""; nameInput.placeholder = getYYMMDD() + "_Freedrawing";
-            if (canvas) { canvas.isDrawingMode = (drawMode === 'freedraw'); updateTravelLines(); }
-        } else if (currentModule === 'Fichier SVG') {
-            if (simSection) simSection.style.display = 'block';
-            if (toolsSvg) toolsSvg.style.display = 'block';
-            nameInput.value = ""; nameInput.placeholder = getYYMMDD() + "_ConvertionSVG";
-        }
-    }
-}
-
-// --- MODULE TEXTE ---
-function buildTextGrid() {
-    const grid = document.getElementById('text-grid-container');
-    const cfg = TABLE_CFG[currentTable];
-    if (!cfg) return;
-
-    const center_px = tableWidth / 2.0; const center_py = tableHeight / 2.0;
-    let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
-    const scale_px = (tableWidth / 2.0) / xmax;
-
-    for (let r = 0; r < cfg.rows.length; r++) {
-        let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
-        for (let c = 0; c < cfg.rows[r]; c++) {
-            let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
-            let py = center_py - cfg.y_centers[r] * scale_px;
-            let input = document.createElement('input');
-            input.type = 'text'; input.maxLength = 1; input.className = 'sunae-letter-box';
-            input.dataset.row = r; input.dataset.col = c;
-            input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
-            input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
-
-            input.addEventListener('keyup', function(e) {
-                let currentText = getGridText();
-                document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
-                if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-                this.value = this.value.toUpperCase();
-                if (this.value.length === 1) {
-                    let next = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c+1}"]`) || document.querySelector(`.sunae-letter-box[data-row="${r+1}"][data-col="0"]`);
-                    if (next) next.focus();
-                }
-            });
-            grid.appendChild(input);
-        }
-    }
-}
-window.resetTextGrid = function() {
-    document.querySelectorAll('.sunae-letter-box').forEach(input => input.value = '');
-    document.getElementById('export-filename').placeholder = "Texte_Sunae";
-}
-
-// --- LE VRAI MOTEUR NATIF DE LECTURE SVG (ZÉRO FABRIC) ---
-function extractNativeStrokes(svgString) {
-    let hiddenDiv = document.getElementById('sunae-hidden-svg');
-    if(!hiddenDiv) {
-        hiddenDiv = document.createElement('div');
-        hiddenDiv.id = 'sunae-hidden-svg';
-        hiddenDiv.style.position = 'absolute';
-        hiddenDiv.style.visibility = 'hidden'; 
-        hiddenDiv.style.width = '1000px';
-        hiddenDiv.style.height = '1000px';
-        hiddenDiv.style.top = '-9999px';
-        document.body.appendChild(hiddenDiv);
-    }
-    hiddenDiv.innerHTML = svgString;
-    let svgEl = hiddenDiv.querySelector('svg');
+// --- EXTRACTION NATIVE DU SVG (ZÉRO FABRICJS) ---
+function extractSVGData(svgString) {
+    let parser = new DOMParser();
+    let doc = parser.parseFromString(svgString, "image/svg+xml");
+    let svgEl = doc.querySelector('svg');
     if(!svgEl) return null;
 
-    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
-    let ptMaker = svgEl.createSVGPoint();
+    // On crée un conteneur invisible pour que le navigateur puisse calculer les longueurs
+    let container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.width = '0'; container.style.height = '0';
+    container.style.overflow = 'hidden';
+    container.innerHTML = svgString;
+    document.body.appendChild(container);
+    let realSvg = container.querySelector('svg');
+
+    let elements = realSvg.querySelectorAll('path, line, polyline, polygon');
     let rawStrokes = [];
-    
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
     elements.forEach(el => {
-        try {
-            let ctm = el.getCTM();
-            if(!ctm) return;
+        let strokesFromElement = [];
+        if (el.tagName.toLowerCase() === 'path') {
+            // Analyse des segments pour couper sur les MoveTo (M/m)
+            let pathData = el.getAttribute('d');
+            let tempPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            let segments = pathData.split(/[Mm]/); // Coupe sur les ordres de levée de crayon
             
-            function applyTransform(x, y) {
-                ptMaker.x = x; ptMaker.y = y;
-                let t = ptMaker.matrixTransform(ctm);
-                if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
-                if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
-                return {x: t.x, y: t.y};
-            }
-
-            if (el.tagName.toLowerCase() === 'path') {
-                let len = el.getTotalLength();
-                if(len > 1) {
-                    let stroke = [];
-                    let rawPrevP = null;
-                    
-                    for(let l=0; l<=len; l+=2) { 
-                        let p = el.getPointAtLength(l);
-                        // LE DÉTECTEUR DE SAUT PARASITE (MoveTo)
-                        if (rawPrevP) {
-                            let rawDist = Math.hypot(p.x - rawPrevP.x, p.y - rawPrevP.y);
-                            if (rawDist > 5) {
-                                if (stroke.length > 1) rawStrokes.push(stroke);
-                                stroke = []; 
-                            }
-                        }
-                        stroke.push(applyTransform(p.x, p.y));
-                        rawPrevP = p;
+            segments.forEach(seg => {
+                if(!seg.trim()) return;
+                tempPath.setAttribute('d', 'M' + seg);
+                let len = tempPath.getTotalLength();
+                if(len > 0.5) {
+                    let pts = [];
+                    for(let l=0; l<=len; l+=2) {
+                        let p = tempPath.getPointAtLength(l);
+                        pts.push({x: p.x, y: p.y});
+                        if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
+                        if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
                     }
-                    if (stroke.length > 1) rawStrokes.push(stroke);
+                    rawStrokes.push(pts);
                 }
-            } 
-            else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
-                let stroke = [];
-                for(let i=0; i<el.points.numberOfItems; i++) {
-                    let p = el.points.getItem(i);
-                    stroke.push(applyTransform(p.x, p.y));
-                }
-                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
-                
-                let sampled = [];
-                for(let i=0; i<stroke.length-1; i++) {
-                    let p1 = stroke[i], p2 = stroke[i+1];
-                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                    let steps = Math.max(1, Math.floor(d / 2));
-                    for(let j=0; j<=steps; j++) {
-                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                    }
-                }
-                rawStrokes.push(sampled);
-            } 
-            else if (el.tagName.toLowerCase() === 'line') {
-                let p1 = applyTransform(el.x1.baseVal.value, el.y1.baseVal.value);
-                let p2 = applyTransform(el.x2.baseVal.value, el.y2.baseVal.value);
-                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                let steps = Math.max(1, Math.floor(d / 2));
-                let sampled = [];
-                for(let j=0; j<=steps; j++) {
-                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                }
-                rawStrokes.push(sampled);
+            });
+        } else {
+            // Pour les lignes/polygones simples
+            let len = (el.getTotalLength) ? el.getTotalLength() : 5; 
+            let pts = [];
+            for(let l=0; l<=len; l+=2) {
+                let p = (el.getPointAtLength) ? el.getPointAtLength(l) : {x:0,y:0};
+                pts.push({x: p.x, y: p.y});
+                if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
+                if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
             }
-        } catch(e) {}
+            rawStrokes.push(pts);
+        }
     });
 
-    if(rawStrokes.length === 0) return null;
+    document.body.removeChild(container);
 
-    // LE CENTRAGE ABSOLU ET INTRAITABLE
+    // Normalisation WYSIWYG
     let inkW = maxX - minX; let inkH = maxY - minY;
-    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
     let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
-    let cx = minX + inkW / 2;
-    let cy = minY + inkH / 2;
-
-    let finalStrokes = [];
-    rawStrokes.forEach(stroke => {
-        let scaledStroke = stroke.map(p => {
-            let sx = (tableWidth / 2) + (p.x - cx) * scale;
-            let sy = (tableHeight / 2) + (p.y - cy) * scale;
-            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
-        });
-        finalStrokes.push(scaledStroke);
-    });
-
-    return finalStrokes;
+    
+    return rawStrokes.map(stroke => stroke.map(p => ({
+        x: (tableWidth / 2) + (p.x - (minX + inkW / 2)) * scale,
+        y: (tableHeight / 2) + (p.y - (minY + inkH / 2)) * scale
+    })));
 }
 
-
-// --- MODULE SVG UPLOAD ---
+// --- CHARGEMENT ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
         const reader = new FileReader();
         reader.onload = function(f) {
-            globalSvgString = f.target.result;
-            
-            let warningDiv = document.getElementById('sunae-jump-warning');
-            if(warningDiv) warningDiv.style.display = 'none';
-
-            // On utilise NOTRE fonction native pour créer la preview
-            globalNativeStrokes = extractNativeStrokes(globalSvgString);
+            globalNativeStrokes = extractSVGData(f.target.result);
             if(globalNativeStrokes) {
-                canvas.getObjects().forEach(o => { if (!o.isBackgroundImage) canvas.remove(o); });
+                canvas.clear();
                 globalNativeStrokes.forEach(stroke => {
-                    let d = "M " + stroke[0].x + " " + stroke[0].y;
-                    for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
-                    let pathObj = new fabric.Path(d, {
-                        fill: null, stroke: '#9b59b6', strokeWidth: 2, opacity: 0.4,
-                        selectable: false, evented: false, isPreviewStroke: true
-                    });
-                    canvas.add(pathObj);
+                    let pts = stroke.map(p => ({x: p.x, y: p.y}));
+                    canvas.add(new fabric.Polyline(pts, { fill:null, stroke:'#9b59b6', strokeWidth:2, opacity:0.3, selectable:false }));
                 });
                 canvas.renderAll();
-            } else {
-                alert("Impossible de lire ce SVG.");
             }
         };
-        reader.readAsText(file);
+        reader.readAsText(e.target.files[0]);
     });
 }
 
-// --- L'ALGORITHME SANDIFY OPTIMISÉ ---
+// --- MOTEUR DE CALCUL ---
 window.optimizeSVG = async function() {
     if(!globalNativeStrokes) return;
-
     const btn = document.getElementById('btn-optimize-svg');
-    const pContainer = document.getElementById('svg-progress-container');
     const pBar = document.getElementById('svg-progress-bar');
-    const pText = document.getElementById('svg-progress-text');
-    
-    let warningDiv = document.getElementById('sunae-jump-warning');
-    if(!warningDiv) {
-        warningDiv = document.createElement('div');
-        warningDiv.id = 'sunae-jump-warning';
-        warningDiv.style.marginTop = '10px';
-        warningDiv.style.marginBottom = '10px';
-        warningDiv.style.padding = '10px';
-        warningDiv.style.backgroundColor = '#fff3cd';
-        warningDiv.style.color = '#856404';
-        warningDiv.style.border = '1px solid #ffeeba';
-        warningDiv.style.borderRadius = '5px';
-        warningDiv.style.fontWeight = 'bold';
-        warningDiv.style.textAlign = 'center';
-        warningDiv.style.display = 'none';
-        document.getElementById('canvas-container').parentNode.insertBefore(warningDiv, document.getElementById('canvas-container'));
-    }
-    warningDiv.style.display = 'none';
+    const warningDiv = document.getElementById('sunae-jump-warning');
+    if(warningDiv) warningDiv.style.display = 'none';
 
-    btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
-    function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
-
-    updateProgress(10, 'Génération du Graphe...');
-    await new Promise(r => setTimeout(r, 50)); 
+    btn.disabled = true;
     
-    // --- 1. GÉNÉRATION DES NOEUDS ---
     let nodes = [];
+    let edges = [];
     let spatialGrid = new Map();
-    let cellSize = 3.0; // Aimant de soudure 
 
-    function addNode(p) {
-        let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
-        let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
-        for(let key of keys) {
-            if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) {
-                    if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; 
-                }
-            }
-        }
+    function getNodeId(p) {
+        let key = `${Math.round(p.x*2)},${Math.round(p.y*2)}`;
+        if(spatialGrid.has(key)) return spatialGrid.get(key);
         let id = nodes.length;
-        let node = {x: p.x, y: p.y, id: id, adj: []};
-        nodes.push(node);
-        let mainKey = `${gx},${gy}`;
-        if(!spatialGrid.has(mainKey)) spatialGrid.set(mainKey, []);
-        spatialGrid.get(mainKey).push(node);
+        nodes.push({ x: p.x, y: p.y, id, adj: [] });
+        spatialGrid.set(key, id);
         return id;
     }
 
-    let edges = [];
-    function addEdge(u, v, isBridge = false, isDuplicate = false) {
-        if (u === v) return;
-        let d = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y);
-        let edge = { u: u, v: v, d: d, isBridge: isBridge, isDuplicate: isDuplicate, used: false, rendered: false };
-        nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
-    }
-
-    // Injection de nos traits natifs parfaits
+    // 1. On remplit le graphe
     globalNativeStrokes.forEach(stroke => {
-        let prevId = addNode(stroke[0]);
-        for(let j=1; j<stroke.length; j++) {
-            let currId = addNode(stroke[j]);
-            addEdge(prevId, currId, false, false);
-            prevId = currId;
+        let prev = getNodeId(stroke[0]);
+        for(let i=1; i<stroke.length; i++){
+            let curr = getNodeId(stroke[i]);
+            if(prev !== curr){
+                let d = Math.hypot(nodes[prev].x - nodes[curr].x, nodes[prev].y - nodes[curr].y);
+                let edge = { u: prev, v: curr, d, isBridge: false, used: false };
+                nodes[prev].adj.push(edge); nodes[curr].adj.push(edge); edges.push(edge);
+            }
+            prev = curr;
         }
     });
 
-    if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
-
-    // --- 2. KRUSKAL ET LIMITE DE SAUT ---
-    updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
-    await new Promise(r => setTimeout(r, 20));
-
-    const MAX_JUMP_PX = 40; 
-    let hasLongBridges = false;
-
-    let parent = new Int32Array(nodes.length);
-    for(let i=0; i<nodes.length; i++) parent[i] = i;
-    function findSet(i) { return parent[i] === i ? i : (parent[i] = findSet(parent[i])); }
-    function unionSet(i, j) { parent[findSet(i)] = findSet(j); }
-    edges.forEach(e => unionSet(e.u, e.v));
+    // 2. Kruskal (Liaison des zones)
+    let parent = nodes.map((_, i) => i);
+    function find(i) { return parent[i] === i ? i : (parent[i] = find(parent[i])); }
+    edges.forEach(e => { let r1 = find(e.u), r2 = find(e.v); if(r1 !== r2) parent[r1] = r2; });
     
-    let comps = []; let compMap = {};
-    for(let i=0; i<nodes.length; i++) {
-        let r = findSet(i);
-        if(compMap[r] === undefined) { compMap[r] = comps.length; comps.push([]); }
-        comps[compMap[r]].push(i);
-    }
-    
-    if(comps.length > 1) {
-        let potentialBridges = [];
-        for(let i=0; i<comps.length; i++) {
-            for(let j=i+1; j<comps.length; j++) {
-                let minDist = Infinity, minU = -1, minV = -1;
-                let step1 = Math.max(1, Math.ceil(comps[i].length / 100));
-                let step2 = Math.max(1, Math.ceil(comps[j].length / 100));
-                for(let ui=0; ui<comps[i].length; ui+=step1) {
-                    let nu = nodes[comps[i][ui]];
-                    for(let vj=0; vj<comps[j].length; vj+=step2) {
-                        let nv = nodes[comps[j][vj]];
-                        let dSq = (nu.x-nv.x)*(nu.x-nv.x) + (nu.y-nv.y)*(nu.y-nv.y);
-                        if(dSq < minDist) { minDist = dSq; minU = nu.id; minV = nv.id; }
-                    }
-                }
-                potentialBridges.push({u: minU, v: minV, d: Math.sqrt(minDist), c1: i, c2: j});
+    let comps = new Map();
+    nodes.forEach(n => { let r = find(n.id); if(!comps.has(r)) comps.set(r, []); comps.get(r).push(n.id); });
+
+    let hasLongBridge = false;
+    if(comps.size > 1) {
+        let compArr = Array.from(comps.values());
+        let bridges = [];
+        for(let i=0; i<compArr.length; i++){
+            for(let j=i+1; j<compArr.length; j++){
+                let minD = Infinity, bestU, bestV;
+                compArr[i].forEach(u => compArr[j].forEach(v => {
+                    let d = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y);
+                    if(d < minD){ minD = d; bestU = u; bestV = v; }
+                }));
+                bridges.push({u: bestU, v: bestV, d: minD, c1: i, c2: j});
             }
         }
-        potentialBridges.sort((a,b) => a.d - b.d);
-        
-        let compParent = new Int32Array(comps.length);
-        for(let i=0; i<comps.length; i++) compParent[i] = i;
-        function cFind(i) { return compParent[i] === i ? i : (compParent[i] = cFind(compParent[i])); }
-        
-        for(let b of potentialBridges) {
-            let r1 = cFind(b.c1), r2 = cFind(b.c2);
-            if(r1 !== r2) {
-                compParent[r1] = r2;
-                if (b.d > MAX_JUMP_PX) hasLongBridges = true; 
-                addEdge(b.u, b.v, true, false); 
+        bridges.sort((a,b) => a.d - b.d);
+        let cP = compArr.map((_, i) => i);
+        function cf(i) { return cP[i] === i ? i : (cP[i] = cf(cP[i])); }
+        bridges.forEach(b => {
+            if(cf(b.c1) !== cf(b.c2)){
+                cP[cf(b.c1)] = cf(b.c2);
+                if(b.d > 40) hasLongBridge = true;
+                let edge = { u: b.u, v: b.v, d: b.d, isBridge: true, used: false };
+                nodes[b.u].adj.push(edge); nodes[b.v].adj.push(edge); edges.push(edge);
             }
-        }
+        });
     }
 
-    // --- 3. EULERIZE (Dijkstra avec pénalité extrême) ---
-    updateProgress(50, 'Routage agressif sur traits...');
-    await new Promise(r => setTimeout(r, 20));
-
-    let odds = [];
-    for(let i=0; i<nodes.length; i++) {
-        if(nodes[i].adj.length % 2 !== 0) odds.push(i);
-    }
-
-    let passes = 0;
-    let totalOdds = odds.length;
-    
+    // 3. Dijkstra (Repassage forcé)
+    let odds = nodes.filter(n => n.adj.length % 2 !== 0).map(n => n.id);
     while(odds.length > 0) {
         let start = odds.pop();
-        let dist = new Float32Array(nodes.length).fill(Infinity);
-        let prev = new Int32Array(nodes.length).fill(-1);
-        dist[start] = 0;
-        
-        let pq = new MinHeap(); pq.push(start, 0);
-        
-        while(!pq.isEmpty()) {
-            let curr = pq.pop(); let u = curr.id;
-            if(curr.dist > dist[u]) continue;
-            for(let edge of nodes[u].adj) {
-                let v = (edge.u === u) ? edge.v : edge.u;
-                // PÉNALITÉ MASSIVE (x10 000) pour forcer le repassage sur les traits existants
-                let cost = edge.isBridge ? (edge.d * 10000) : edge.d;
-                let nd = curr.dist + cost;
-                
-                if(nd < dist[v]) { dist[v] = nd; prev[v] = u; pq.push(v, nd); }
+        let dists = new Float32Array(nodes.length).fill(Infinity);
+        let prevs = new Int32Array(nodes.length).fill(-1);
+        let pq = new MinHeap();
+        dists[start] = 0; pq.push(start, 0);
+
+        while(!pq.isEmpty()){
+            let {id: u, dist} = pq.pop();
+            if(dist > dists[u]) continue;
+            nodes[u].adj.forEach(e => {
+                let v = e.u === u ? e.v : e.u;
+                let weight = e.isBridge ? e.d * 1000000 : e.d; // PÉNALITÉ MASSIVE
+                if(dists[u] + weight < dists[v]){
+                    dists[v] = dists[u] + weight;
+                    prevs[v] = u; pq.push(v, dists[v]);
+                }
+            });
+        }
+        let target = -1, minD = Infinity, tIdx = -1;
+        odds.forEach((id, idx) => { if(dists[id] < minD){ minD = dists[id]; target = id; tIdx = idx; }});
+        if(target !== -1){
+            odds.splice(tIdx, 1);
+            let c = target;
+            while(c !== start){
+                let p = prevs[c];
+                let orig = nodes[c].adj.find(e => (e.u===p && e.v===c) || (e.v===p && e.u===c));
+                let edge = { u: p, v: c, d: orig.d, isBridge: orig.isBridge, isDuplicate: true, used: false };
+                nodes[p].adj.push(edge); nodes[c].adj.push(edge); edges.push(edge);
+                c = p;
             }
         }
-        
-        let bestOddIdx = -1; let minDist = Infinity;
-        for(let i=0; i<odds.length; i++) {
-            if(dist[odds[i]] < minDist) { minDist = dist[odds[i]]; bestOddIdx = i; }
-        }
-        
-        if(bestOddIdx !== -1) {
-            let target = odds[bestOddIdx];
-            odds.splice(bestOddIdx, 1);
-            
-            let curr = target;
-            while(curr !== start) {
-                let p = prev[curr];
-                let origEdge = nodes[curr].adj.find(e => (e.u===curr && e.v===p) || (e.v===curr && e.u===p));
-                addEdge(curr, p, origEdge ? origEdge.isBridge : false, true); 
-                curr = p;
-            }
-        }
-        passes++;
-        if (passes % 10 === 0) {
-            updateProgress(50 + Math.floor((1 - (odds.length / totalOdds)) * 30), 'Routage (Eulerize)...');
-            await new Promise(r => setTimeout(r, 0));
-        }
     }
 
-    // --- 4. HIERHOLZER (Chemin continu AVEC TRI HEURISTIQUE) ---
-    updateProgress(85, 'Génération du chemin continu...');
-    await new Promise(r => setTimeout(r, 20));
+    // 4. Hierholzer (Chemin continu)
+    function getScore(e) { if(e.isBridge) return 1; if(e.isDuplicate) return 2; return 3; }
+    nodes.forEach(n => n.adj.sort((a,b) => getScore(b) - getScore(a)));
 
-    let adjTr = Array.from({length: nodes.length}, () => []);
-    edges.forEach((e, idx) => {
-        e.used = false;
-        adjTr[e.u].push({to: e.v, edgeIdx: idx, dir: 1});
-        adjTr[e.v].push({to: e.u, edgeIdx: idx, dir: -1});
-    });
-
-    // LA FONCTION DE TRI : Priorité absolue au dessin original !
-    function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on repousse à la fin)
-        if (e.isDuplicate) return 2;    // Repassage (Choix moyen)
-        return 3;                       // Vrais traits bleus du dessin (Meilleur choix)
-    }
-
-    for(let i=0; i<nodes.length; i++) {
-        adjTr[i].sort((a, b) => getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx])); 
-    }
-
-    let startNode = 0;
-    for(let i=0; i<nodes.length; i++) { if(nodes[i].adj.length > 0) { startNode = i; break; } }
-
-    let stack = [startNode];
-    let nodePath = [];
-
-    while(stack.length > 0) {
+    let path = [], stack = [nodes[0].id];
+    while(stack.length > 0){
         let u = stack[stack.length - 1];
-        let nextEdge = null;
-        
-        for(let i=adjTr[u].length - 1; i >= 0; i--) {
-            if(!edges[adjTr[u][i].edgeIdx].used) {
-                nextEdge = adjTr[u][i]; 
-                break;
-            }
-        }
-        
-        if(nextEdge) {
-            edges[nextEdge.edgeIdx].used = true;
-            stack.push(nextEdge.to);
-        } else {
-            nodePath.push(stack.pop());
-        }
+        let next = nodes[u].adj.find(e => !e.used);
+        if(next){ next.used = true; stack.push(next.u === u ? next.v : next.u); }
+        else path.push(stack.pop());
     }
-    nodePath.reverse();
 
-    // --- 5. DESSIN WYSIWYG ---
-    updateProgress(95, 'Affichage visuel...');
-    await new Promise(r => setTimeout(r, 10));
-
-    // Nettoyage de la preview brute
-    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage) canvas.remove(o); });
-    
-    let displayPaths = [];
-    let currentPts = [];
-    let currentIsRed = false;
-
-    for(let i=0; i<nodePath.length-1; i++) {
-        let u = nodePath[i];
-        let v = nodePath[i+1];
-        
-        let edge = nodes[u].adj.find(e => ((e.u === u && e.v === v) || (e.v === u && e.u === v)) && !e.rendered);
+    // 5. Rendu FabricJS (uniquement pour l'affichage)
+    canvas.clear();
+    for(let i=0; i<path.length-1; i++){
+        let u = path[i], v = path[i+1];
+        let edge = edges.find(e => !e.rendered && ((e.u===u && e.v===v) || (e.v===u && e.u===v)));
         if(edge) edge.rendered = true;
-        
-        let stepIsRed = edge ? edge.isBridge : false;
-        
-        if(currentPts.length === 0) {
-            currentPts.push(nodes[u]);
-            currentIsRed = stepIsRed;
-        }
-        
-        if(currentIsRed !== stepIsRed) {
-            displayPaths.push({pts: currentPts, isRed: currentIsRed});
-            currentPts = [nodes[u], nodes[v]];
-            currentIsRed = stepIsRed;
-        } else {
-            currentPts.push(nodes[v]);
-        }
+        let isRed = edge ? edge.isBridge : false;
+        canvas.add(new fabric.Line([nodes[u].x, nodes[u].y, nodes[v].x, nodes[v].y], {
+            stroke: isRed ? 'red' : '#2980b9', strokeWidth: isRed ? 2 : 3,
+            selectable: false, isUserStroke: !isRed, isTravelLine: isRed, sunaeAbsPoints: [nodes[u], nodes[v]]
+        }));
     }
-    if(currentPts.length > 1) displayPaths.push({pts: currentPts, isRed: currentIsRed});
 
-    displayPaths.forEach((dp, i) => {
-        let pts = dp.pts;
-        let d = "M " + pts[0].x + " " + pts[0].y;
-        for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
-        
-        let pathObj = new fabric.Path(d, {
-            fill: null, stroke: dp.isRed ? 'red' : '#2980b9', 
-            strokeWidth: dp.isRed ? 2 : 3, strokeDashArray: dp.isRed ? [5, 5] : null, opacity: dp.isRed ? 0.7 : 1,
-            strokeLineCap: 'round', strokeLineJoin: 'round',
-            selectable: false, isUserStroke: !dp.isRed, isTravelLine: dp.isRed,
-            createdAt: Date.now() + i, travelIndex: dp.isRed ? i : undefined, sunaeAbsPoints: pts
-        });
-        canvas.add(pathObj);
-        if(dp.isRed) pathObj.sendToBack();
-    });
-
-    canvas.renderAll();
-
-    // Affichage de l'alerte
-    if (hasLongBridges) {
-        warningDiv.innerHTML = "⚠️ Attention : Votre image comporte des traits discontinus nécessitant un saut de la bille supérieur à 3 cm. Un trait rouge a été généré.";
+    if(hasLongBridge && warningDiv) {
+        warningDiv.innerText = "⚠️ Attention : Image discontinue. Sauts > 3cm détectés.";
         warningDiv.style.display = 'block';
     }
-
-    updateProgress(100, 'Terminé !');
-    setTimeout(() => { pContainer.style.display = 'none'; btn.disabled = false; btn.style.opacity = '1'; }, 1000);
+    btn.disabled = false; btn.style.opacity = '1';
+    canvas.renderAll();
 };
 
-window.resetSVG = function() {
-    globalSvgString = null;
-    globalNativeStrokes = null;
-    let warningDiv = document.getElementById('sunae-jump-warning');
-    if(warningDiv) warningDiv.style.display = 'none';
-    resetCanvas();
-}
-
-// --- INITIALISATION DU CANEVAS ---
-function setupWorkspace(tableName, round, w_param, h_param) {
+// --- INITIALISATION ---
+function setupWorkspace(tableName, round) {
     currentTable = tableName; isRound = round;
-    goToStep(3, currentModule || 'Dessin Libre');
-
-    // VERROUILLAGE MATHÉMATIQUE (Taille absolue)
-    const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
-    tableWidth = 600;
-    tableHeight = round ? 600 : tableWidth / aspect;
-
+    const aspect = TABLE_CFG[tableName].aspect;
+    let h = round ? tableWidth : tableWidth / aspect;
     if (canvas) canvas.dispose();
-
-    const canvasEl = document.getElementById('sunae-canvas');
-    if (canvasEl) { canvasEl.width = tableWidth; canvasEl.height = tableHeight; }
-
-    canvas = new fabric.Canvas('sunae-canvas', {
-        width: tableWidth, 
-        height: tableHeight,
-        enableRetinaScaling: false, // DÉSACTIVE LE DÉCALAGE DE DENSITÉ PIXEL
-        isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
-        selection: false
-    });
-
-    const container = document.getElementById('canvas-container');
-    container.style.width = '100%';
-    container.style.maxWidth = tableWidth + 'px';
-    container.style.height = 'auto';
-    container.style.aspectRatio = round ? '1 / 1' : `${tableWidth} / ${tableHeight}`;
-    container.style.borderRadius = isRound ? '50%' : '20px';
-
-    if (isRound) canvas.clipPath = new fabric.Circle({ radius: tableWidth / 2, originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2 });
-    else canvas.clipPath = new fabric.Rect({ width: tableWidth, height: tableHeight, rx: 20, ry: 20, originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2 });
-
-    canvas.freeDrawingBrush.color = '#2980b9'; canvas.freeDrawingBrush.width = 3;
-
-    canvas.on('path:created', function(e) {
-        if (currentModule !== 'Dessin Libre') return;
-        let pathObj = e.path;
-        let objMat = pathObj.calcTransformMatrix();
-        let absPoints = []; 
-
-        for (let i = 0; i < pathObj.path.length; i++) {
-            let cmd = pathObj.path[i];
-            if (cmd[0] === 'M' || cmd[0] === 'L') {
-                let p = fabric.util.transformPoint({x: cmd[1] - pathObj.pathOffset.x, y: cmd[2] - pathObj.pathOffset.y}, objMat);
-                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, tableWidth, tableHeight));
-            } else if (cmd[0] === 'Q') {
-                let p = fabric.util.transformPoint({x: cmd[3] - pathObj.pathOffset.x, y: cmd[4] - pathObj.pathOffset.y}, objMat);
-                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, tableWidth, tableHeight)); 
-            }
-        }
-        pathObj.set({ selectable: false, isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: absPoints });
-        updateTravelLines();
-    });
-
-    canvas.on('mouse:down', function(o) {
-        if (currentModule !== 'Dessin Libre' || drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
-        isDrawingLine = true; let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, tableWidth, tableHeight);
-        tempLine = new fabric.Line([p.x, p.y, p.x, p.y], { strokeWidth: 3, fill: '#2980b9', stroke: '#2980b9', originX: 'center', originY: 'center', selectable: false, evented: false, isUserStroke: true, createdAt: Date.now() });
-        canvas.add(tempLine);
-    });
-
-    canvas.on('mouse:move', function(o) {
-        if (!isDrawingLine) return;
-        let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, tableWidth, tableHeight);
-        tempLine.set({ x2: p.x, y2: p.y }); canvas.renderAll();
-    });
-
-    canvas.on('mouse:up', function() {
-        if (!isDrawingLine) return;
-        isDrawingLine = false; 
-        if (tempLine) {
-            tempLine.sunaeAbsPoints = [{x: tempLine.x1, y: tempLine.y1}, {x: tempLine.x2, y: tempLine.y2}];
-            updateTravelLines();
-        }
-    });
-
-    document.querySelectorAll('input[name="drawMode"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-            drawMode = this.value;
-            if(currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw' && document.getElementById('bille-slider').value == 100);
-        });
-    });
-
-    setupBackgroundControls(); setupSimulator();
-}
-
-window.undoStroke = function() {
-    const strokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    if (strokes.length > 0) { canvas.remove(strokes[strokes.length - 1]); updateTravelLines(); }
-}
-
-window.resetCanvas = function() {
-    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage && !o.isPreviewStroke) canvas.remove(o); });
-    canvas.renderAll();
-}
-
-function setupBackgroundControls() {
-    document.getElementById('bg-upload').addEventListener('change', function(e) {
-        if (!e.target.files[0]) return;
-        const reader = new FileReader();
-        reader.onload = function(f) {
-            fabric.Image.fromURL(f.target.result, function(img) {
-                if (bgImageObj) canvas.remove(bgImageObj);
-                bgImageObj = img;
-                bgImageObj.set({ originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2, opacity: 0.5, selectable: false, evented: false, isBackgroundImage: true });
-                canvas.add(bgImageObj); bgImageObj.sendToBack(); canvas.renderAll();
-            });
-        };
-        reader.readAsDataURL(e.target.files[0]);
-    });
-}
-
-function getStrokeStart(stroke) {
-    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
-    return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
-}
-
-function getStrokeEnd(stroke) {
-    if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[stroke.sunaeAbsPoints.length - 1];
-    return { x: stroke.origX2 !== undefined ? stroke.origX2 : stroke.x2, y: stroke.origY2 !== undefined ? stroke.origY2 : stroke.y2 };
-}
-
-function updateTravelLines() {
-    if(currentModule !== 'Dessin Libre') return; 
-    canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
-    const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
-    
-    for (let i = 1; i < userStrokes.length; i++) {
-        const prevEnd = getStrokeEnd(userStrokes[i - 1]);
-        const currStart = getStrokeStart(userStrokes[i]);
-
-        if (prevEnd && currStart) {
-            const redLine = new fabric.Line([prevEnd.x, prevEnd.y, currStart.x, currStart.y], {
-                stroke: 'red', strokeWidth: 2, strokeDashArray: [5, 5], opacity: 0.7,
-                selectable: false, evented: false, isTravelLine: true, travelIndex: i - 1,
-                sunaeAbsPoints: [prevEnd, currStart] 
-            });
-            canvas.add(redLine); redLine.sendToBack();
-        }
-    }
-    if (bgImageObj) bgImageObj.sendToBack();
-    canvas.renderAll();
-}
-
-function setupSimulator() {
-    const slider = document.getElementById('bille-slider');
-    let simOverlay = document.getElementById('sim-overlay');
-    if (!simOverlay) {
-        simOverlay = document.createElement('div');
-        simOverlay.id = 'sim-overlay'; simOverlay.style.position = 'absolute'; simOverlay.style.top = '0'; simOverlay.style.left = '0';
-        simOverlay.style.width = '100%'; simOverlay.style.height = '100%'; simOverlay.style.pointerEvents = 'none';
-        simOverlay.style.borderRadius = isRound ? '50%' : '20px'; simOverlay.style.overflow = 'hidden';
-        document.getElementById('canvas-container').appendChild(simOverlay);
-    }
-    
-    slider.addEventListener('input', function() {
-        if (currentModule === 'Texte Automatique') return; 
-
-        const percent = parseInt(this.value); simOverlay.innerHTML = '';
-        
-        let allSegments = canvas.getObjects().filter(o => o.isUserStroke || o.isTravelLine).sort((a, b) => a.createdAt - b.createdAt);
-
-        if (percent === 100) {
-            if (currentModule === 'Dessin Libre') canvas.isDrawingMode = (drawMode === 'freedraw');
-            allSegments.forEach(o => {
-                o.set({ opacity: (o.isTravelLine ? 0.7 : 1) });
-                if (o.type === 'path' && o.origPath) o.set({ path: o.origPath, left: o.origLeft, top: o.origTop, pathOffset: new fabric.Point(o.origPathOffset.x, o.origPathOffset.y), width: o.origWidth, height: o.origHeight });
-                if ((o.type === 'line' || o.isTravelLine) && o.origX2 !== undefined) o.set({ x2: o.origX2, y2: o.origY2 });
-            });
-            canvas.renderAll(); return;
-        }
-
-        canvas.isDrawingMode = false;
-        let totalLength = 0;
-        
-        allSegments.forEach(seg => {
-            if (seg.type === 'path' && !seg.origPath) {
-                seg.origPath = seg.path; seg.origLeft = seg.left; seg.origTop = seg.top;
-                seg.origPathOffset = { x: seg.pathOffset.x, y: seg.pathOffset.y }; seg.origWidth = seg.width; seg.origHeight = seg.height;
-            }
-            if ((seg.type === 'line' || seg.isTravelLine) && seg.origX2 === undefined) {
-                seg.origX1 = seg.x1; seg.origY1 = seg.y1; seg.origX2 = seg.x2; seg.origY2 = seg.y2;
-            }
-            seg.segmentLength = seg.sunaeAbsPoints ? seg.sunaeAbsPoints.length : 10;
-            totalLength += seg.segmentLength;
-        });
-
-        if (totalLength === 0) return;
-        const targetLength = (percent / 100) * totalLength;
-        let currentLength = 0; let currentDotPos = null; let startDotPos = allSegments[0] && allSegments[0].sunaeAbsPoints ? allSegments[0].sunaeAbsPoints[0] : null;
-
-        allSegments.forEach((seg) => {
-            if (currentLength + seg.segmentLength <= targetLength) {
-                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
-                if (seg.type === 'path') seg.set({ path: seg.origPath });
-                if (seg.type === 'line' || seg.isTravelLine) seg.set({ x2: seg.origX2, y2: seg.origY2 });
-                if (seg.sunaeAbsPoints) currentDotPos = seg.sunaeAbsPoints[seg.sunaeAbsPoints.length-1];
-                currentLength += seg.segmentLength;
-            }
-            else if (currentLength < targetLength) {
-                seg.set({ opacity: (seg.isTravelLine ? 0.7 : 1) });
-                const ratio = (targetLength - currentLength) / seg.segmentLength;
-
-                if (seg.type === 'path') {
-                    const cmdsToShow = Math.max(1, Math.floor(seg.origPath.length * ratio));
-                    seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
-                    seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
-                    if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
-                        const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
-                        currentDotPos = seg.sunaeAbsPoints[targetIdx];
-                    }
-                } else if (seg.type === 'line' || seg.isTravelLine) {
-                    const newX = seg.origX1 + (seg.origX2 - seg.origX1) * ratio;
-                    const newY = seg.origY1 + (seg.origY2 - seg.origY1) * ratio;
-                    seg.set({ x2: newX, y2: newY });
-                    currentDotPos = {x: newX, y: newY};
-                }
-                currentLength += seg.segmentLength; 
-            }
-            else { seg.set({ opacity: 0 }); }
-        });
-
-        let svgDots = '';
-        if (targetLength > 0 && startDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#2ecc71; border-radius:50%; left:${startDotPos.x-6}px; top:${startDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
-        if (currentDotPos) svgDots += `<div style="position:absolute; width:12px; height:12px; background-color:#c0392b; border-radius:50%; left:${currentDotPos.x-6}px; top:${currentDotPos.y-6}px; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`;
-        simOverlay.innerHTML = svgDots;
-        canvas.renderAll();
-    });
-}
-
-window.exportTHR = function() {
-    let customName = document.getElementById('export-filename').value.trim();
-    let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
-    
-    let exportData = { table: currentTable, module: currentModule, canvasWidth: tableWidth, canvasHeight: tableHeight };
-
-    if (currentModule === 'Texte Automatique') {
-        const cfg = TABLE_CFG[currentTable]; let text_lines = [];
-        for (let r = 0; r < cfg.rows.length; r++) {
-            let rowText = "";
-            for (let c = 0; c < cfg.rows[r]; c++) {
-                let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
-                rowText += input && input.value ? input.value : " ";
-            }
-            text_lines.push(rowText);
-        }
-        exportData.text_lines = text_lines;
-    } else {
-        if (!canvas) return;
-        document.getElementById('bille-slider').value = 100; document.getElementById('bille-slider').dispatchEvent(new Event('input'));
-        exportData.drawing = canvas.toJSON(['isUserStroke', 'isTravelLine', 'isBackgroundImage', 'createdAt', 'sunaeAbsPoints']);
-    }
-
-    fetch('/export-thr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(exportData) })
-    .then(r => r.blob()).then(blob => {
-        const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = `${finalFileName.replace(/\s+/g, '_')}.thr`;
-        document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(a.href);
-    }).catch(e => alert("Erreur lors de la génération."));
+    canvas = new fabric.Canvas('sunae-canvas', { width: tableWidth, height: h, enableRetinaScaling: false, selection: false });
+    document.getElementById('canvas-container').style.maxWidth = tableWidth + 'px';
 }
