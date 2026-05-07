@@ -5,7 +5,7 @@ let currentModule = null;
 let isRound = false;
 let globalNativeStrokes = null; 
 
-// --- VERROU MATHÉMATIQUE ---
+// --- VERROU MATHÉMATIQUE (WYSIWYG) ---
 const tableWidth = 600;
 const tableHeight = 600;
 
@@ -47,7 +47,7 @@ class MinHeap {
     isEmpty() { return this.data.length === 0; }
 }
 
-// --- FONCTIONS DE NAVIGATION (RÉPARÉES) ---
+// --- NAVIGATION ---
 function goToStep(step, moduleName = null) {
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
     const target = document.getElementById('step-' + step);
@@ -58,14 +58,36 @@ function goToStep(step, moduleName = null) {
         document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
         document.getElementById('module-workspace').style.display = 'block';
         
-        // Cacher/Montrer les outils spécifiques
-        document.getElementById('tools-svg').style.display = (moduleName === 'Fichier SVG') ? 'block' : 'none';
+        // Affichage des outils SVG uniquement si nécessaire
+        const toolsSvg = document.getElementById('tools-svg');
+        if(toolsSvg) toolsSvg.style.display = (moduleName === 'Fichier SVG') ? 'block' : 'none';
         
         if (canvas) { canvas.clear(); }
     }
 }
 
-// --- EXTRACTION NATIVE DU SVG (ZÉRO TRAIT PARASITE) ---
+// --- INITIALISATION DU CANEVAS (REFIXÉ) ---
+function setupWorkspace(tableName, round) {
+    currentTable = tableName; 
+    isRound = round;
+    const aspect = TABLE_CFG[tableName].aspect;
+    let h = round ? tableWidth : tableWidth / aspect;
+    
+    if (canvas) canvas.dispose();
+    canvas = new fabric.Canvas('sunae-canvas', { 
+        width: tableWidth, 
+        height: h, 
+        enableRetinaScaling: false, 
+        selection: false 
+    });
+    
+    const container = document.getElementById('canvas-container');
+    container.style.maxWidth = tableWidth + 'px';
+    
+    goToStep(2); // On passe au choix de l'expérience
+}
+
+// --- EXTRACTION NATIVE DU SVG (SANS FABRIC POUR LES CALCULS) ---
 function extractSVGData(svgString) {
     let container = document.createElement('div');
     container.style.position = 'absolute'; container.style.visibility = 'hidden';
@@ -90,7 +112,7 @@ function extractSVGData(svgString) {
             pathData = 'M ' + pts + (el.tagName.toLowerCase() === 'polygon' ? ' Z' : '');
         }
 
-        // COUPE STRICTE SUR LES MOVE-TO
+        // DÉCOUPAGE MOVE-TO (Supprime les traits bleus de liaison)
         let segments = pathData.split(/[Mm]/);
         segments.forEach(seg => {
             if(!seg.trim()) return;
@@ -111,11 +133,14 @@ function extractSVGData(svgString) {
     });
     document.body.removeChild(container);
 
+    if(rawStrokes.length === 0) return null;
+
     let inkW = maxX - minX, inkH = maxY - minY;
     let scale = Math.min((tableWidth * 0.85) / inkW, (tableHeight * 0.85) / inkH);
+    
     return rawStrokes.map(s => s.map(p => ({
         x: (tableWidth/2) + (p.x - (minX + inkW/2)) * scale,
-        y: (tableHeight/2) + (p.y - (minY + inkH/2)) * scale
+        y: (canvas.height/2) + (p.y - (minY + inkH/2)) * scale
     })));
 }
 
@@ -126,7 +151,7 @@ if (svgUploadInput) {
         const reader = new FileReader();
         reader.onload = function(f) {
             globalNativeStrokes = extractSVGData(f.target.result);
-            if(canvas) {
+            if(globalNativeStrokes) {
                 canvas.clear();
                 globalNativeStrokes.forEach(s => {
                     canvas.add(new fabric.Polyline(s, { fill:null, stroke:'#9b59b6', strokeWidth:2, opacity:0.4, selectable:false }));
@@ -138,7 +163,7 @@ if (svgUploadInput) {
     });
 }
 
-// --- MOTEUR DE CALCUL ---
+// --- OPTIMISATION SANDIFY ---
 window.optimizeSVG = async function() {
     if(!globalNativeStrokes) return;
     const btn = document.getElementById('btn-optimize-svg');
@@ -168,6 +193,7 @@ window.optimizeSVG = async function() {
         }
     });
 
+    // Kruskal pour les ponts obligatoires
     let parent = nodes.map((_, i) => i);
     function find(i) { return parent[i] === i ? i : (parent[i] = find(parent[i])); }
     edges.forEach(e => { let r1 = find(e.u), r2 = find(e.v); if(r1 !== r2) parent[r1] = r2; });
@@ -194,13 +220,14 @@ window.optimizeSVG = async function() {
         bridges.forEach(b => {
             if(cf(b.c1) !== cf(b.c2)) {
                 cP[cf(b.c1)] = cf(b.c2);
-                if(b.d > 40) hasLongBridge = true;
+                if(b.d > 40) hasLongBridge = true; // Alerte 3cm
                 let e = { u: b.u, v: b.v, d: b.d, isBridge: true, used: false };
                 nodes[b.u].adj.push(e); nodes[b.v].adj.push(e); edges.push(e);
             }
         });
     }
 
+    // Dijkstra avec pénalité 1M
     let odds = nodes.filter(n => n.adj.length % 2 !== 0).map(n => n.id);
     while(odds.length > 0) {
         let start = odds.pop(), dists = new Float32Array(nodes.length).fill(Infinity), prevs = new Int32Array(nodes.length).fill(-1);
@@ -210,7 +237,7 @@ window.optimizeSVG = async function() {
             if(dist > dists[u]) continue;
             nodes[u].adj.forEach(e => {
                 let v = e.u === u ? e.v : e.u;
-                let w = e.isBridge ? e.d * 1000000 : e.d; // PÉNALITÉ ANTI-SAUT
+                let w = e.isBridge ? e.d * 1000000 : e.d; 
                 if(dists[u] + w < dists[v]) { dists[v] = dists[u] + w; prevs[v] = u; pq.push(v, dists[v]); }
             });
         }
@@ -227,6 +254,7 @@ window.optimizeSVG = async function() {
         }
     }
 
+    // Hierholzer + Tri
     function getScore(e) { if(e.isBridge) return 1; if(e.isDuplicate) return 2; return 3; }
     nodes.forEach(n => n.adj.sort((a,b) => getScore(b) - getScore(a)));
 
@@ -241,7 +269,7 @@ window.optimizeSVG = async function() {
     for(let i=0; i<path.length-1; i++) {
         let u = path[i], v = path[i+1];
         let e = edges.find(e => !e.rendered && ((e.u===u && e.v===v) || (e.v===u && e.u===v)));
-        if(edge) edge.rendered = true;
+        if(e) e.rendered = true;
         let isRed = e ? e.isBridge : false;
         canvas.add(new fabric.Line([nodes[u].x, nodes[u].y, nodes[v].x, nodes[v].y], {
             stroke: isRed ? 'red' : '#2980b9', strokeWidth: isRed ? 2 : 3, selectable: false,
@@ -255,16 +283,3 @@ window.optimizeSVG = async function() {
     }
     btn.disabled = false; canvas.renderAll();
 };
-
-// --- INITIALISATION ---
-function setupWorkspace(tableName, round) {
-    currentTable = tableName; isRound = round;
-    const aspect = TABLE_CFG[tableName].aspect;
-    let h = round ? tableWidth : tableWidth / aspect;
-    if (canvas) canvas.dispose();
-    canvas = new fabric.Canvas('sunae-canvas', { width: tableWidth, height: h, enableRetinaScaling: false, selection: false });
-    document.getElementById('canvas-container').style.maxWidth = tableWidth + 'px';
-    
-    // Aller à l'étape du choix de module
-    goToStep(2);
-}
