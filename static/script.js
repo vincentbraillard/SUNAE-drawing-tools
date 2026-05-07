@@ -9,8 +9,9 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 let currentSvgGroup = null;
+let globalSvgString = null; // Stocke le code SVG brut pour la lecture native
 
-// --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
+// --- VARIABLES FIXES ---
 let tableWidth = 600;
 let tableHeight = 600;
 
@@ -165,7 +166,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG ---
+// --- MODULE SVG UPLOAD ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -173,17 +174,13 @@ if (svgUploadInput) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(f) {
-            fabric.loadSVGFromString(f.target.result, function(objects, options) {
+            globalSvgString = f.target.result; // On sauvegarde le code brut pour l'extraction native
+            
+            // Preview basique via FabricJS juste pour montrer que le fichier est chargé
+            fabric.loadSVGFromString(globalSvgString, function(objects, options) {
                 if (currentSvgGroup) canvas.remove(currentSvgGroup);
                 currentSvgGroup = fabric.util.groupSVGElements(objects, options);
-                
-                // Utilisation de la taille absolue et fixe (tableWidth / tableHeight)
-                currentSvgGroup.set({
-                    left: tableWidth / 2, top: tableHeight / 2,
-                    originX: 'center', originY: 'center',
-                    borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
-                });
-                
+                currentSvgGroup.set({ left: tableWidth / 2, top: tableHeight / 2, originX: 'center', originY: 'center', opacity: 0.4 });
                 let scale = Math.min(tableWidth / currentSvgGroup.width, tableHeight / currentSvgGroup.height) * 0.8;
                 currentSvgGroup.scale(scale);
                 canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
@@ -193,9 +190,9 @@ if (svgUploadInput) {
     });
 }
 
-// --- ALGORITHME DU POSTIER CHINOIS (SANDIFY) ---
+// --- L'ALGORITHME SANDIFY (EXTRACTION NATIVE + POSTIER CHINOIS) ---
 window.optimizeSVG = async function() {
-    if(!currentSvgGroup) return;
+    if(!globalSvgString) return;
 
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
@@ -205,13 +202,96 @@ window.optimizeSVG = async function() {
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
-    updateProgress(0, 'Extraction WYSIWYG...');
+    updateProgress(0, 'Extraction géométrique absolue...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    let objectsToProcess = currentSvgGroup.type === 'group' ? currentSvgGroup.getObjects() : [currentSvgGroup];
-    let groupMatrix = currentSvgGroup.calcTransformMatrix(); 
+    // --- BYPASS FABRIC.JS : Création d'un DOM caché ---
+    let hiddenDiv = document.getElementById('sunae-hidden-svg');
+    if(!hiddenDiv) {
+        hiddenDiv = document.createElement('div');
+        hiddenDiv.id = 'sunae-hidden-svg';
+        hiddenDiv.style.position = 'absolute';
+        hiddenDiv.style.visibility = 'hidden';
+        hiddenDiv.style.width = '1000px';
+        hiddenDiv.style.height = '1000px';
+        hiddenDiv.style.top = '-9999px';
+        document.body.appendChild(hiddenDiv);
+    }
+    hiddenDiv.innerHTML = globalSvgString;
+    let svgEl = hiddenDiv.querySelector('svg');
     
-    // --- 1. GÉNÉRATION DES NOEUDS (Graphes) ---
+    if(!svgEl) { alert("Format SVG non reconnu"); btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
+
+    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
+    let ptMaker = svgEl.createSVGPoint();
+    let tempStrokes = [];
+    
+    // Pour calculer le VRAI centre de l'encre
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    elements.forEach(el => {
+        try {
+            let ctm = el.getCTM();
+            if(!ctm) return;
+            
+            function applyTransform(x, y) {
+                ptMaker.x = x; ptMaker.y = y;
+                let t = ptMaker.matrixTransform(ctm);
+                if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
+                if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
+                return {x: t.x, y: t.y};
+            }
+
+            if (el.tagName.toLowerCase() === 'path') {
+                let len = el.getTotalLength();
+                if (len > 0) {
+                    let stroke = [];
+                    for (let l = 0; l <= len; l += 2) {
+                        let p = el.getPointAtLength(l);
+                        stroke.push(applyTransform(p.x, p.y));
+                    }
+                    tempStrokes.push(stroke);
+                }
+            } else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
+                let stroke = [];
+                for(let i=0; i<el.points.numberOfItems; i++) {
+                    let p = el.points.getItem(i);
+                    stroke.push(applyTransform(p.x, p.y));
+                }
+                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
+                
+                let sampled = [];
+                for(let i=0; i<stroke.length-1; i++) {
+                    let p1 = stroke[i], p2 = stroke[i+1];
+                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                    let steps = Math.max(1, Math.floor(d / 2));
+                    for(let j=0; j<=steps; j++) {
+                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                    }
+                }
+                tempStrokes.push(sampled);
+            } else if (el.tagName.toLowerCase() === 'line') {
+                let p1 = applyTransform(el.x1.baseVal.value, el.y1.baseVal.value);
+                let p2 = applyTransform(el.x2.baseVal.value, el.y2.baseVal.value);
+                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                let steps = Math.max(1, Math.floor(d / 2));
+                let sampled = [];
+                for(let j=0; j<=steps; j++) {
+                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                }
+                tempStrokes.push(sampled);
+            }
+        } catch(e) { console.warn(e); }
+    });
+
+    // NORMALISATION ABSOLUE : On force le dessin à faire 80% de la table, centré parfaitement.
+    let inkW = maxX - minX; let inkH = maxY - minY;
+    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
+    
+    let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
+    let cx = minX + inkW / 2;
+    let cy = minY + inkH / 2;
+
     let nodes = [];
     let spatialGrid = new Map();
     let cellSize = 2.0;
@@ -221,9 +301,7 @@ window.optimizeSVG = async function() {
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
         for(let key of keys) {
             if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) {
-                    if(Math.hypot(n.x - p.x, n.y - p.y) < 1.0) return n.id; 
-                }
+                for(let n of spatialGrid.get(key)) { if(Math.hypot(n.x - p.x, n.y - p.y) < 1.0) return n.id; }
             }
         }
         let id = nodes.length;
@@ -243,66 +321,23 @@ window.optimizeSVG = async function() {
         nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
     }
 
-    for(let i=0; i<objectsToProcess.length; i++) {
-        let obj = objectsToProcess[i];
+    tempStrokes.forEach(stroke => {
+        if(stroke.length < 2) return;
+        let scaledStroke = stroke.map(p => {
+            let sx = (tableWidth / 2) + (p.x - cx) * scale;
+            let sy = (tableHeight / 2) + (p.y - cy) * scale;
+            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
+        });
         
-        let objMat = obj.calcTransformMatrix(); 
-        if (currentSvgGroup.type === 'group') {
-            objMat = fabric.util.multiplyTransformMatrices(groupMatrix, objMat);
+        let prevId = addNode(scaledStroke[0]);
+        for(let j=1; j<scaledStroke.length; j++) {
+            let currId = addNode(scaledStroke[j]);
+            let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
+            // Filtre anti-saut invisible
+            if (len < 20) { addEdge(prevId, currId, false, false); }
+            prevId = currId;
         }
-        
-        function processPathSegment(pts) {
-            if(pts.length < 2) return;
-            let prevId = addNode(pts[0]);
-            for(let j=1; j<pts.length; j++) {
-                let currId = addNode(pts[j]);
-                let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
-                if (len < 20) { addEdge(prevId, currId, false, false); }
-                prevId = currId;
-            }
-        }
-
-        if (obj.type === 'path') {
-            let svgNS = "http://www.w3.org/2000/svg";
-            let pathEl = document.createElementNS(svgNS, "path");
-            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
-            let len = pathEl.getTotalLength();
-            if(len > 1) {
-                let pts = [];
-                for(let l=0; l<=len; l+=2) { 
-                    let pt = pathEl.getPointAtLength(l);
-                    let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
-                    let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
-                }
-                processPathSegment(pts);
-            }
-        }
-        else if (obj.type === 'polygon' || obj.type === 'polyline' || obj.type === 'line') {
-            let pts = [];
-            if (obj.type === 'line') {
-                pts = [{x: obj.x1, y: obj.y1}, {x: obj.x2, y: obj.y2}];
-            } else {
-                pts = [...obj.points];
-                if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
-            }
-            
-            let sampledPts = [];
-            for(let j=0; j<pts.length-1; j++) {
-                let p1 = pts[j]; let p2 = pts[j+1];
-                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                let count = Math.max(1, Math.floor(d / 2));
-                for(let k=0; k<=count; k++) {
-                    let ptX = p1.x + (p2.x - p1.x)*(k/count) - (obj.pathOffset ? obj.pathOffset.x : 0);
-                    let ptY = p1.y + (p2.y - p1.y)*(k/count) - (obj.pathOffset ? obj.pathOffset.y : 0);
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    sampledPts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
-                }
-            }
-            processPathSegment(sampledPts);
-        }
-    }
+    });
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
@@ -423,13 +458,12 @@ window.optimizeSVG = async function() {
 
     // LA FONCTION DE TRI : Priorité absolue au dessin original !
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Sauts rouges (Pire choix)
+        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix)
         if (e.isDuplicate) return 2;    // Repassage invisible (Choix moyen)
         return 3;                       // Vrais traits bleus du dessin (Meilleur choix)
     }
 
     for(let i=0; i<nodes.length; i++) {
-        // Tri croissant pour que la fin du tableau contienne le meilleur score
         adjTr[i].sort((a, b) => getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx])); 
     }
 
@@ -443,7 +477,6 @@ window.optimizeSVG = async function() {
         let u = stack[stack.length - 1];
         let nextEdge = null;
         
-        // Parcourt les routes disponibles, de la fin du tableau (meilleur score) au début
         for(let i=adjTr[u].length - 1; i >= 0; i--) {
             if(!edges[adjTr[u][i].edgeIdx].used) {
                 nextEdge = adjTr[u][i]; 
@@ -464,7 +497,8 @@ window.optimizeSVG = async function() {
     updateProgress(95, 'Affichage visuel...');
     await new Promise(r => setTimeout(r, 10));
 
-    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
+    // Suppression de l'ancienne preview Fabric
+    if(currentSvgGroup) { canvas.remove(currentSvgGroup); currentSvgGroup = null; }
     
     let displayPaths = [];
     let currentPts = [];
@@ -527,26 +561,26 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
 
-    // --- LE VERROU MATHÉMATIQUE (Fin du bug Ordi/Mobile) ---
+    // VERROUILLAGE MATHÉMATIQUE (Taille absolue)
     const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
     tableWidth = 600;
     tableHeight = round ? 600 : tableWidth / aspect;
 
     if (canvas) canvas.dispose();
-    
-    // On force la taille du DOM pour ne pas polluer l'initialisation
+
+    // Empêcher FabricJS d'inventer des résolutions
     const canvasEl = document.getElementById('sunae-canvas');
     if (canvasEl) { canvasEl.width = tableWidth; canvasEl.height = tableHeight; }
 
     canvas = new fabric.Canvas('sunae-canvas', {
         width: tableWidth, 
         height: tableHeight,
-        enableRetinaScaling: false, // DÉSACTIVE LE PIÈGE DE LA DENSITÉ PIXEL (MOBILE VS PC)
+        enableRetinaScaling: false, // BLOQUE L'INTERFÉRENCE DES ÉCRANS DE TÉLÉPHONES
         isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
         selection: false
     });
 
-    // Ajustement visuel CSS (Zoom de la fenêtre sans toucher aux mathématiques de 600px)
+    // Zoom visuel avec le CSS
     const container = document.getElementById('canvas-container');
     container.style.width = '100%';
     container.style.maxWidth = tableWidth + 'px';
@@ -637,7 +671,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -762,7 +796,7 @@ window.exportTHR = function() {
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
     
-    // On envoie le VRAI tableWidth mathématique (600) au serveur pour que les coordonnées restent parfaites
+    // Le serveur recevra TOUJOURS la matrice absolue (tableWidth / tableHeight)
     let exportData = { table: currentTable, module: currentModule, canvasWidth: tableWidth, canvasHeight: tableHeight };
 
     if (currentModule === 'Texte Automatique') {
