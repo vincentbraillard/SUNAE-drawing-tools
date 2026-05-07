@@ -125,6 +125,7 @@ function buildTextGrid() {
     const grid = document.getElementById('text-grid-container');
     const cfg = TABLE_CFG[currentTable];
     if (!cfg) return;
+
     const center_px = canvas.width / 2.0; const center_py = canvas.height / 2.0;
     let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
     const scale_px = (canvas.width / 2.0) / xmax;
@@ -196,16 +197,19 @@ window.optimizeSVG = async function() {
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
     // --- 1. LECTURE WYSIWYG ---
-    updateProgress(0, 'Extraction des tracés (WYSIWYG)...');
+    updateProgress(0, 'Extraction des tracés...');
     await new Promise(r => setTimeout(r, 50)); 
     
     let rawStrokes = [];
     let objectsToProcess = currentSvgGroup._objects || [currentSvgGroup];
-    let groupMatrix = currentSvgGroup.calcTransformMatrix(); // Garde l'échelle et la position parfaites
 
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
-        let objMat = fabric.util.multiplyTransformMatrices(groupMatrix, obj.calcTransformMatrix());
+        
+        // LE CORRECTIF MAGIQUE EST ICI :
+        // obj.calcTransformMatrix() retourne DÉJÀ la matrice absolue, qui inclut le groupe, l'échelle et le pan !
+        // Plus de double-multiplication.
+        let objMat = obj.calcTransformMatrix();
         
         if (obj.type === 'path') {
             let subPaths = []; let currentPathCmds = [];
@@ -265,7 +269,6 @@ window.optimizeSVG = async function() {
     let nodes = [];
     let edges = [];
     
-    // Fonction pour fusionner les points très proches (Tolérance 0.5px)
     function getNodeId(p) {
         for(let i=0; i<nodes.length; i++) {
             if(Math.hypot(nodes[i].x - p.x, nodes[i].y - p.y) < 0.5) return i;
@@ -319,7 +322,6 @@ window.optimizeSVG = async function() {
     let oddNodes = [];
     for(let i=0; i<nodes.length; i++) if(degrees[i] % 2 !== 0) oddNodes.push(i);
 
-    // Fonction Dijkstra pour trouver le plus court chemin SUR LE TRACÉ EXISTANT
     function getShortestPath(startNode) {
         let dist = new Array(nodes.length).fill(Infinity);
         let prev = new Array(nodes.length).fill(null);
@@ -343,7 +345,6 @@ window.optimizeSVG = async function() {
         return {dist, prev};
     }
 
-    // Association gloutonne des noeuds impairs
     let passes = 0;
     while(oddNodes.length > 0) {
         let u = oddNodes[0];
@@ -355,7 +356,6 @@ window.optimizeSVG = async function() {
         }
         let v = oddNodes[bestVIdx];
         
-        // On duplique le chemin exact (ce qui autorise la bille à repasser dessus !)
         let curr = v;
         while(curr !== u) {
             let step = paths.prev[curr]; let e = step.edge;
@@ -401,13 +401,11 @@ window.optimizeSVG = async function() {
     // --- 6. DESSIN SUR LE CANEVAS ---
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    // On dessine le résultat d'un seul trait magique !
     eulerPath.forEach((step, i) => {
         let pts = [...step.edge.points];
         if(step.dir === -1) pts.reverse();
 
-        let isRed = step.edge.isBridge; // Seuls les "sauts" obligatoires dans le vide seront rouges !
-        // Les lignes dupliquées (repassage) seront invisibles (fondues dans le bleu)
+        let isRed = step.edge.isBridge;
 
         let d = "M " + pts[0].x + " " + pts[0].y;
         for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
@@ -544,7 +542,7 @@ function getStrokeEnd(stroke) {
 }
 
 function updateTravelLines() {
-    if(currentModule !== 'Dessin Libre') return; // Le SVG gère ses propres lignes rouges
+    if(currentModule !== 'Dessin Libre') return; 
     canvas.getObjects().filter(o => o.isTravelLine).forEach(line => canvas.remove(line));
     const userStrokes = canvas.getObjects().filter(o => o.isUserStroke).sort((a, b) => a.createdAt - b.createdAt);
     
