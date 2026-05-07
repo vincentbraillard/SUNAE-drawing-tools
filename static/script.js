@@ -9,8 +9,9 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 let currentSvgGroup = null;
+let globalSvgString = null; // Stocke le code SVG brut pour la lecture native
 
-// --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
+// --- VARIABLES FIXES ---
 let tableWidth = 600;
 let tableHeight = 600;
 
@@ -20,7 +21,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA (Ultra-rapide) ---
+// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -165,7 +166,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG ---
+// --- MODULE SVG UPLOAD ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -173,18 +174,15 @@ if (svgUploadInput) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(f) {
-            // Nettoyage de l'alerte potentielle du dessin précédent
+            globalSvgString = f.target.result; 
+            
             let warningDiv = document.getElementById('sunae-jump-warning');
             if(warningDiv) warningDiv.style.display = 'none';
 
-            fabric.loadSVGFromString(f.target.result, function(objects, options) {
+            fabric.loadSVGFromString(globalSvgString, function(objects, options) {
                 if (currentSvgGroup) canvas.remove(currentSvgGroup);
                 currentSvgGroup = fabric.util.groupSVGElements(objects, options);
-                currentSvgGroup.set({
-                    left: tableWidth / 2, top: tableHeight / 2,
-                    originX: 'center', originY: 'center',
-                    borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
-                });
+                currentSvgGroup.set({ left: tableWidth / 2, top: tableHeight / 2, originX: 'center', originY: 'center', opacity: 0.4 });
                 let scale = Math.min(tableWidth / currentSvgGroup.width, tableHeight / currentSvgGroup.height) * 0.8;
                 currentSvgGroup.scale(scale);
                 canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
@@ -194,9 +192,9 @@ if (svgUploadInput) {
     });
 }
 
-// --- ALGORITHME DU POSTIER CHINOIS ---
+// --- L'ALGORITHME SANDIFY (EXTRACTION NATIVE + POSTIER CHINOIS) ---
 window.optimizeSVG = async function() {
-    if(!currentSvgGroup) return;
+    if(!globalSvgString) return;
 
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
@@ -225,25 +223,128 @@ window.optimizeSVG = async function() {
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
-    updateProgress(0, 'Extraction WYSIWYG...');
+    updateProgress(0, 'Extraction géométrique absolue...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    let objectsToProcess = currentSvgGroup.type === 'group' ? currentSvgGroup.getObjects() : [currentSvgGroup];
-    let groupMatrix = currentSvgGroup.calcTransformMatrix(); 
+    let hiddenDiv = document.getElementById('sunae-hidden-svg');
+    if(!hiddenDiv) {
+        hiddenDiv = document.createElement('div');
+        hiddenDiv.id = 'sunae-hidden-svg';
+        hiddenDiv.style.position = 'absolute';
+        hiddenDiv.style.visibility = 'hidden';
+        hiddenDiv.style.width = '1000px';
+        hiddenDiv.style.height = '1000px';
+        hiddenDiv.style.top = '-9999px';
+        document.body.appendChild(hiddenDiv);
+    }
+    hiddenDiv.innerHTML = globalSvgString;
+    let svgEl = hiddenDiv.querySelector('svg');
     
-    // --- 1. GÉNÉRATION DES NOEUDS (Graphes) ---
+    if(!svgEl) { alert("Format SVG non reconnu"); btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
+
+    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
+    let ptMaker = svgEl.createSVGPoint();
+    let tempStrokes = [];
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    elements.forEach(el => {
+        try {
+            let ctm = el.getCTM();
+            if(!ctm) return;
+            
+            function applyTransform(x, y) {
+                ptMaker.x = x; ptMaker.y = y;
+                let t = ptMaker.matrixTransform(ctm);
+                if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
+                if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
+                return {x: t.x, y: t.y};
+            }
+
+            if (el.tagName.toLowerCase() === 'path') {
+                // LA CORRECTION DES LIGNES PARASITES EST ICI : Découpe du chemin sur les MoveTo (M ou m)
+                let d = el.getAttribute('d');
+                if(!d) return;
+                
+                // On utilise fabric.Path pour parser facilement le 'd'
+                let parsedPath = new fabric.Path(d).path;
+                let subPaths = [];
+                let currentSub = [];
+                
+                parsedPath.forEach(cmd => {
+                    if ((cmd[0] === 'M' || cmd[0] === 'm') && currentSub.length > 0) {
+                        subPaths.push(currentSub);
+                        currentSub = [cmd];
+                    } else {
+                        currentSub.push(cmd);
+                    }
+                });
+                if(currentSub.length > 0) subPaths.push(currentSub);
+
+                let svgNS = "http://www.w3.org/2000/svg";
+                subPaths.forEach(sp => {
+                    let tempPath = document.createElementNS(svgNS, "path");
+                    tempPath.setAttribute('d', sp.map(c => c.join(' ')).join(' '));
+                    let len = tempPath.getTotalLength();
+                    if(len > 1) {
+                        let stroke = [];
+                        for(let l=0; l<=len; l+=2) {
+                            let p = tempPath.getPointAtLength(l);
+                            stroke.push(applyTransform(p.x, p.y));
+                        }
+                        tempStrokes.push(stroke);
+                    }
+                });
+            } else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
+                let stroke = [];
+                for(let i=0; i<el.points.numberOfItems; i++) {
+                    let p = el.points.getItem(i);
+                    stroke.push(applyTransform(p.x, p.y));
+                }
+                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
+                
+                let sampled = [];
+                for(let i=0; i<stroke.length-1; i++) {
+                    let p1 = stroke[i], p2 = stroke[i+1];
+                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                    let steps = Math.max(1, Math.floor(d / 2));
+                    for(let j=0; j<=steps; j++) {
+                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                    }
+                }
+                tempStrokes.push(sampled);
+            } else if (el.tagName.toLowerCase() === 'line') {
+                let p1 = applyTransform(el.x1.baseVal.value, el.y1.baseVal.value);
+                let p2 = applyTransform(el.x2.baseVal.value, el.y2.baseVal.value);
+                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                let steps = Math.max(1, Math.floor(d / 2));
+                let sampled = [];
+                for(let j=0; j<=steps; j++) {
+                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                }
+                tempStrokes.push(sampled);
+            }
+        } catch(e) { console.warn(e); }
+    });
+
+    // NORMALISATION ABSOLUE
+    let inkW = maxX - minX; let inkH = maxY - minY;
+    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
+    
+    let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
+    let cx = minX + inkW / 2;
+    let cy = minY + inkH / 2;
+
     let nodes = [];
     let spatialGrid = new Map();
-    let cellSize = 3.0; // Tolérance de fusion (Welding)
+    let cellSize = 3.0; // Aimant de soudure
 
     function addNode(p) {
         let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
         for(let key of keys) {
             if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) {
-                    if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; 
-                }
+                for(let n of spatialGrid.get(key)) { if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; }
             }
         }
         let id = nodes.length;
@@ -263,65 +364,21 @@ window.optimizeSVG = async function() {
         nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
     }
 
-    for(let i=0; i<objectsToProcess.length; i++) {
-        let obj = objectsToProcess[i];
-        let objMat = obj.calcTransformMatrix(); 
-        if (currentSvgGroup.type === 'group') {
-            objMat = fabric.util.multiplyTransformMatrices(groupMatrix, objMat);
-        }
+    tempStrokes.forEach(stroke => {
+        if(stroke.length < 2) return;
+        let scaledStroke = stroke.map(p => {
+            let sx = (tableWidth / 2) + (p.x - cx) * scale;
+            let sy = (tableHeight / 2) + (p.y - cy) * scale;
+            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
+        });
         
-        function processPathSegment(pts) {
-            if(pts.length < 2) return;
-            let prevId = addNode(pts[0]);
-            for(let j=1; j<pts.length; j++) {
-                let currId = addNode(pts[j]);
-                let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
-                if (len < 20) { addEdge(prevId, currId, false, false); }
-                prevId = currId;
-            }
+        let prevId = addNode(scaledStroke[0]);
+        for(let j=1; j<scaledStroke.length; j++) {
+            let currId = addNode(scaledStroke[j]);
+            addEdge(prevId, currId, false, false);
+            prevId = currId;
         }
-
-        if (obj.type === 'path') {
-            let svgNS = "http://www.w3.org/2000/svg";
-            let pathEl = document.createElementNS(svgNS, "path");
-            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
-            let len = pathEl.getTotalLength();
-            if(len > 1) {
-                let pts = [];
-                for(let l=0; l<=len; l+=2) { 
-                    let pt = pathEl.getPointAtLength(l);
-                    let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
-                    let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
-                }
-                processPathSegment(pts);
-            }
-        }
-        else if (obj.type === 'polygon' || obj.type === 'polyline' || obj.type === 'line') {
-            let pts = [];
-            if (obj.type === 'line') {
-                pts = [{x: obj.x1, y: obj.y1}, {x: obj.x2, y: obj.y2}];
-            } else {
-                pts = [...obj.points];
-                if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
-            }
-            
-            let sampledPts = [];
-            for(let j=0; j<pts.length-1; j++) {
-                let p1 = pts[j]; let p2 = pts[j+1];
-                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                let count = Math.max(1, Math.floor(d / 2));
-                for(let k=0; k<=count; k++) {
-                    let ptX = p1.x + (p2.x - p1.x)*(k/count) - (obj.pathOffset ? obj.pathOffset.x : 0);
-                    let ptY = p1.y + (p2.y - p1.y)*(k/count) - (obj.pathOffset ? obj.pathOffset.y : 0);
-                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    sampledPts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
-                }
-            }
-            processPathSegment(sampledPts);
-        }
-    }
+    });
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
@@ -329,7 +386,6 @@ window.optimizeSVG = async function() {
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
 
-    // Définition de la distance maximale acceptée (~3cm à l'échelle)
     const MAX_JUMP_PX = 40; 
     let hasLongBridges = false;
 
@@ -374,12 +430,7 @@ window.optimizeSVG = async function() {
             let r1 = cFind(b.c1), r2 = cFind(b.c2);
             if(r1 !== r2) {
                 compParent[r1] = r2;
-                
-                // DÉTECTION DES SAUTS TROP LONGS !
-                if (b.d > MAX_JUMP_PX) {
-                    hasLongBridges = true;
-                }
-                
+                if (b.d > MAX_JUMP_PX) hasLongBridges = true;
                 addEdge(b.u, b.v, true, false); 
             }
         }
@@ -410,7 +461,7 @@ window.optimizeSVG = async function() {
             if(curr.dist > dist[u]) continue;
             for(let edge of nodes[u].adj) {
                 let v = (edge.u === u) ? edge.v : edge.u;
-                // PÉNALITÉ DE L'EXTRÊME : Force la bille à rester sur le bleu
+                // Pénalité pour rester sur le bleu
                 let cost = edge.isBridge ? (edge.d * 10000) : edge.d;
                 let nd = curr.dist + cost;
                 
@@ -442,7 +493,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // --- 4. HIERHOLZER (Chemin continu avec Tri) ---
+    // --- 4. HIERHOLZER ---
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -493,7 +544,7 @@ window.optimizeSVG = async function() {
     updateProgress(95, 'Affichage visuel...');
     await new Promise(r => setTimeout(r, 10));
 
-    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
+    if(currentSvgGroup) { canvas.remove(currentSvgGroup); currentSvgGroup = null; }
     
     let displayPaths = [];
     let currentPts = [];
@@ -541,7 +592,6 @@ window.optimizeSVG = async function() {
 
     canvas.renderAll();
 
-    // Affichage de l'alerte si des sauts trop longs ont été détectés
     if (hasLongBridges) {
         warningDiv.innerHTML = "⚠️ Attention : Votre image comporte des traits discontinus nécessitant un saut de la bille supérieur à 3 cm. Un trait rouge a été généré.";
         warningDiv.style.display = 'block';
@@ -767,7 +817,7 @@ function setupSimulator() {
                     seg.set({ path: seg.origPath.slice(0, cmdsToShow) });
                     seg.set({ left: seg.origLeft, top: seg.origTop, pathOffset: new fabric.Point(seg.origPathOffset.x, seg.origPathOffset.y), width: seg.origWidth, height: seg.origHeight });
                     if (seg.sunaeAbsPoints && seg.sunaeAbsPoints.length > 0) {
-                        const targetIdx = Math.min(cmdsToShow - 1, seg.sunaeAbsPoints.length - 1);
+                        const targetIdx = Math.min(cmdsToShow - 1, sunaeAbsPoints.length - 1);
                         currentDotPos = seg.sunaeAbsPoints[targetIdx];
                     }
                 } else if (seg.type === 'line' || seg.isTravelLine) {
