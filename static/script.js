@@ -8,7 +8,9 @@ let drawMode = 'freedraw';
 let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
-let globalSvgString = null; // Stocke le SVG pur pour la lecture Native
+
+let globalSvgString = null; 
+let globalNativeStrokes = null; // Stocke les données mathématiques pures !
 
 // --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
 let tableWidth = 600;
@@ -165,6 +167,120 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
+// --- LE VRAI MOTEUR NATIF DE LECTURE SVG (ZÉRO FABRIC) ---
+function extractNativeStrokes(svgString) {
+    let hiddenDiv = document.getElementById('sunae-hidden-svg');
+    if(!hiddenDiv) {
+        hiddenDiv = document.createElement('div');
+        hiddenDiv.id = 'sunae-hidden-svg';
+        hiddenDiv.style.position = 'absolute';
+        hiddenDiv.style.visibility = 'hidden'; 
+        hiddenDiv.style.width = '1000px';
+        hiddenDiv.style.height = '1000px';
+        hiddenDiv.style.top = '-9999px';
+        document.body.appendChild(hiddenDiv);
+    }
+    hiddenDiv.innerHTML = svgString;
+    let svgEl = hiddenDiv.querySelector('svg');
+    if(!svgEl) return null;
+
+    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
+    let ptMaker = svgEl.createSVGPoint();
+    let rawStrokes = [];
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    elements.forEach(el => {
+        try {
+            let ctm = el.getCTM();
+            if(!ctm) return;
+            
+            function applyTransform(x, y) {
+                ptMaker.x = x; ptMaker.y = y;
+                let t = ptMaker.matrixTransform(ctm);
+                if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
+                if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
+                return {x: t.x, y: t.y};
+            }
+
+            if (el.tagName.toLowerCase() === 'path') {
+                let len = el.getTotalLength();
+                if(len > 1) {
+                    let stroke = [];
+                    let rawPrevP = null;
+                    
+                    for(let l=0; l<=len; l+=2) { 
+                        let p = el.getPointAtLength(l);
+                        // LE DÉTECTEUR DE SAUT PARASITE (MoveTo)
+                        if (rawPrevP) {
+                            let rawDist = Math.hypot(p.x - rawPrevP.x, p.y - rawPrevP.y);
+                            if (rawDist > 5) {
+                                if (stroke.length > 1) rawStrokes.push(stroke);
+                                stroke = []; 
+                            }
+                        }
+                        stroke.push(applyTransform(p.x, p.y));
+                        rawPrevP = p;
+                    }
+                    if (stroke.length > 1) rawStrokes.push(stroke);
+                }
+            } 
+            else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
+                let stroke = [];
+                for(let i=0; i<el.points.numberOfItems; i++) {
+                    let p = el.points.getItem(i);
+                    stroke.push(applyTransform(p.x, p.y));
+                }
+                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
+                
+                let sampled = [];
+                for(let i=0; i<stroke.length-1; i++) {
+                    let p1 = stroke[i], p2 = stroke[i+1];
+                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                    let steps = Math.max(1, Math.floor(d / 2));
+                    for(let j=0; j<=steps; j++) {
+                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                    }
+                }
+                rawStrokes.push(sampled);
+            } 
+            else if (el.tagName.toLowerCase() === 'line') {
+                let p1 = applyTransform(el.x1.baseVal.value, el.y1.baseVal.value);
+                let p2 = applyTransform(el.x2.baseVal.value, el.y2.baseVal.value);
+                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                let steps = Math.max(1, Math.floor(d / 2));
+                let sampled = [];
+                for(let j=0; j<=steps; j++) {
+                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
+                }
+                rawStrokes.push(sampled);
+            }
+        } catch(e) {}
+    });
+
+    if(rawStrokes.length === 0) return null;
+
+    // LE CENTRAGE ABSOLU ET INTRAITABLE
+    let inkW = maxX - minX; let inkH = maxY - minY;
+    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
+    let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
+    let cx = minX + inkW / 2;
+    let cy = minY + inkH / 2;
+
+    let finalStrokes = [];
+    rawStrokes.forEach(stroke => {
+        let scaledStroke = stroke.map(p => {
+            let sx = (tableWidth / 2) + (p.x - cx) * scale;
+            let sy = (tableHeight / 2) + (p.y - cy) * scale;
+            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
+        });
+        finalStrokes.push(scaledStroke);
+    });
+
+    return finalStrokes;
+}
+
+
 // --- MODULE SVG UPLOAD ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
@@ -173,36 +289,42 @@ if (svgUploadInput) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(f) {
-            globalSvgString = f.target.result; // On ne parse plus avec Fabric ! 
+            globalSvgString = f.target.result;
             
             let warningDiv = document.getElementById('sunae-jump-warning');
             if(warningDiv) warningDiv.style.display = 'none';
 
-            // Affichage visuel rapide (Optionnel, juste pour dire que le fichier est lu)
-            fabric.loadSVGFromString(globalSvgString, function(objects, options) {
-                canvas.clear();
-                let tempGroup = fabric.util.groupSVGElements(objects, options);
-                tempGroup.set({ left: tableWidth / 2, top: tableHeight / 2, originX: 'center', originY: 'center', opacity: 0.3 });
-                let scale = Math.min(tableWidth / tempGroup.width, tableHeight / tempGroup.height) * 0.8;
-                tempGroup.scale(scale);
-                canvas.add(tempGroup);
+            // On utilise NOTRE fonction native pour créer la preview
+            globalNativeStrokes = extractNativeStrokes(globalSvgString);
+            if(globalNativeStrokes) {
+                canvas.getObjects().forEach(o => { if (!o.isBackgroundImage) canvas.remove(o); });
+                globalNativeStrokes.forEach(stroke => {
+                    let d = "M " + stroke[0].x + " " + stroke[0].y;
+                    for(let j=1; j<stroke.length; j++) d += " L " + stroke[j].x + " " + stroke[j].y;
+                    let pathObj = new fabric.Path(d, {
+                        fill: null, stroke: '#9b59b6', strokeWidth: 2, opacity: 0.4,
+                        selectable: false, evented: false, isPreviewStroke: true
+                    });
+                    canvas.add(pathObj);
+                });
                 canvas.renderAll();
-            });
+            } else {
+                alert("Impossible de lire ce SVG.");
+            }
         };
         reader.readAsText(file);
     });
 }
 
-// --- L'ALGORITHME SANDIFY 100% NATIF (SANS LE PARSEUR FABRIC) ---
+// --- L'ALGORITHME SANDIFY OPTIMISÉ ---
 window.optimizeSVG = async function() {
-    if(!globalSvgString) return;
+    if(!globalNativeStrokes) return;
 
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
     const pBar = document.getElementById('svg-progress-bar');
     const pText = document.getElementById('svg-progress-text');
     
-    // Alerte UI
     let warningDiv = document.getElementById('sunae-jump-warning');
     if(!warningDiv) {
         warningDiv = document.createElement('div');
@@ -224,135 +346,22 @@ window.optimizeSVG = async function() {
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
-    updateProgress(0, 'Analyse géométrique native...');
+    updateProgress(10, 'Génération du Graphe...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    // --- 1. CRÉATION DU DOM CACHÉ POUR LE SCAN NATIF ---
-    let hiddenDiv = document.getElementById('sunae-hidden-svg');
-    if(!hiddenDiv) {
-        hiddenDiv = document.createElement('div');
-        hiddenDiv.id = 'sunae-hidden-svg';
-        hiddenDiv.style.position = 'absolute';
-        hiddenDiv.style.visibility = 'hidden'; // Ne pas mettre display:none sinon la matrice getCTM() ne marche pas !
-        hiddenDiv.style.width = '1000px';
-        hiddenDiv.style.height = '1000px';
-        hiddenDiv.style.top = '-9999px';
-        document.body.appendChild(hiddenDiv);
-    }
-    hiddenDiv.innerHTML = globalSvgString;
-    let svgEl = hiddenDiv.querySelector('svg');
-    
-    if(!svgEl) { alert("Format SVG invalide"); btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
-
-    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
-    let ptMaker = svgEl.createSVGPoint();
-    let tempStrokes = [];
-    
-    // On va stocker les limites min et max pour faire un centrage Mathématique Absolu
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-    elements.forEach(el => {
-        try {
-            let ctm = el.getCTM();
-            if(!ctm) return;
-
-            if (el.tagName.toLowerCase() === 'path') {
-                let len = el.getTotalLength();
-                if(len > 1) {
-                    let stroke = [];
-                    let rawPrevP = null;
-                    
-                    for(let l=0; l<=len; l+=2) { 
-                        let p = el.getPointAtLength(l);
-                        
-                        // LE SCANNER ANTI-PARASITE NATIF
-                        // Si la distance non-transformée saute de plus de 5 unités, c'est un MoveTo caché !
-                        if (rawPrevP) {
-                            let rawDist = Math.hypot(p.x - rawPrevP.x, p.y - rawPrevP.y);
-                            if (rawDist > 5) {
-                                if (stroke.length > 1) tempStrokes.push(stroke);
-                                stroke = []; 
-                            }
-                        }
-
-                        // Transformation de la matrice absolue
-                        ptMaker.x = p.x; ptMaker.y = p.y;
-                        let transformed = ptMaker.matrixTransform(ctm);
-                        
-                        if(transformed.x < minX) minX = transformed.x; if(transformed.x > maxX) maxX = transformed.x;
-                        if(transformed.y < minY) minY = transformed.y; if(transformed.y > maxY) maxY = transformed.y;
-                        
-                        stroke.push({x: transformed.x, y: transformed.y});
-                        rawPrevP = p;
-                    }
-                    if (stroke.length > 1) tempStrokes.push(stroke);
-                }
-            } 
-            else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
-                let stroke = [];
-                for(let i=0; i<el.points.numberOfItems; i++) {
-                    let p = el.points.getItem(i);
-                    ptMaker.x = p.x; ptMaker.y = p.y;
-                    let t = ptMaker.matrixTransform(ctm);
-                    if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
-                    if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
-                    stroke.push({x: t.x, y: t.y});
-                }
-                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
-                
-                // Échantillonnage pour que le réseau de noeuds soit uniforme
-                let sampled = [];
-                for(let i=0; i<stroke.length-1; i++) {
-                    let p1 = stroke[i], p2 = stroke[i+1];
-                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                    let steps = Math.max(1, Math.floor(d / 2));
-                    for(let j=0; j<=steps; j++) {
-                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                    }
-                }
-                tempStrokes.push(sampled);
-            } 
-            else if (el.tagName.toLowerCase() === 'line') {
-                ptMaker.x = el.x1.baseVal.value; ptMaker.y = el.y1.baseVal.value;
-                let p1 = ptMaker.matrixTransform(ctm);
-                ptMaker.x = el.x2.baseVal.value; ptMaker.y = el.y2.baseVal.value;
-                let p2 = ptMaker.matrixTransform(ctm);
-                
-                if(p1.x < minX) minX = p1.x; if(p1.x > maxX) maxX = p1.x;
-                if(p1.y < minY) minY = p1.y; if(p1.y > maxY) maxY = p1.y;
-                if(p2.x < minX) minX = p2.x; if(p2.x > maxX) maxX = p2.x;
-                if(p2.y < minY) minY = p2.y; if(p2.y > maxY) maxY = p2.y;
-
-                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                let steps = Math.max(1, Math.floor(d / 2));
-                let sampled = [];
-                for(let j=0; j<=steps; j++) {
-                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                }
-                tempStrokes.push(sampled);
-            }
-        } catch(e) { console.warn(e); }
-    });
-
-    // --- CENTRAGE ET NORMALISATION ABSOLUE ---
-    let inkW = maxX - minX; let inkH = maxY - minY;
-    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
-    
-    // Le dessin prend 80% de la table, quoi qu'il arrive
-    let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
-    let cx = minX + inkW / 2;
-    let cy = minY + inkH / 2;
-
+    // --- 1. GÉNÉRATION DES NOEUDS ---
     let nodes = [];
     let spatialGrid = new Map();
-    let cellSize = 3.0; // Aimant de soudure
+    let cellSize = 3.0; // Aimant de soudure 
 
     function addNode(p) {
         let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
         for(let key of keys) {
             if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) { if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; }
+                for(let n of spatialGrid.get(key)) {
+                    if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; 
+                }
             }
         }
         let id = nodes.length;
@@ -372,18 +381,11 @@ window.optimizeSVG = async function() {
         nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
     }
 
-    tempStrokes.forEach(stroke => {
-        if(stroke.length < 2) return;
-        let scaledStroke = stroke.map(p => {
-            // L'application du scale et le centrage au milieu du plateau
-            let sx = (tableWidth / 2) + (p.x - cx) * scale;
-            let sy = (tableHeight / 2) + (p.y - cy) * scale;
-            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
-        });
-        
-        let prevId = addNode(scaledStroke[0]);
-        for(let j=1; j<scaledStroke.length; j++) {
-            let currId = addNode(scaledStroke[j]);
+    // Injection de nos traits natifs parfaits
+    globalNativeStrokes.forEach(stroke => {
+        let prevId = addNode(stroke[0]);
+        for(let j=1; j<stroke.length; j++) {
+            let currId = addNode(stroke[j]);
             addEdge(prevId, currId, false, false);
             prevId = currId;
         }
@@ -395,7 +397,7 @@ window.optimizeSVG = async function() {
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
 
-    const MAX_JUMP_PX = 40; // Tolérance d'environ 3cm
+    const MAX_JUMP_PX = 40; 
     let hasLongBridges = false;
 
     let parent = new Int32Array(nodes.length);
@@ -439,13 +441,13 @@ window.optimizeSVG = async function() {
             let r1 = cFind(b.c1), r2 = cFind(b.c2);
             if(r1 !== r2) {
                 compParent[r1] = r2;
-                if (b.d > MAX_JUMP_PX) hasLongBridges = true; // ALERTE SI DÉPASSEMENT
+                if (b.d > MAX_JUMP_PX) hasLongBridges = true; 
                 addEdge(b.u, b.v, true, false); 
             }
         }
     }
 
-    // --- 3. EULERIZE (Dijkstra agressif) ---
+    // --- 3. EULERIZE (Dijkstra avec pénalité extrême) ---
     updateProgress(50, 'Routage agressif sur traits...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -470,7 +472,7 @@ window.optimizeSVG = async function() {
             if(curr.dist > dist[u]) continue;
             for(let edge of nodes[u].adj) {
                 let v = (edge.u === u) ? edge.v : edge.u;
-                // Pénalité massive (x10 000) pour forcer la bille à rester sur le bleu
+                // PÉNALITÉ MASSIVE (x10 000) pour forcer le repassage sur les traits existants
                 let cost = edge.isBridge ? (edge.d * 10000) : edge.d;
                 let nd = curr.dist + cost;
                 
@@ -515,13 +517,12 @@ window.optimizeSVG = async function() {
 
     // LA FONCTION DE TRI : Priorité absolue au dessin original !
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix)
+        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on repousse à la fin)
         if (e.isDuplicate) return 2;    // Repassage (Choix moyen)
         return 3;                       // Vrais traits bleus du dessin (Meilleur choix)
     }
 
     for(let i=0; i<nodes.length; i++) {
-        // Tri croissant pour le pop()
         adjTr[i].sort((a, b) => getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx])); 
     }
 
@@ -555,8 +556,8 @@ window.optimizeSVG = async function() {
     updateProgress(95, 'Affichage visuel...');
     await new Promise(r => setTimeout(r, 10));
 
-    // Suppression totale et dessin sur la coquille vide Fabric
-    canvas.clear();
+    // Nettoyage de la preview brute
+    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage) canvas.remove(o); });
     
     let displayPaths = [];
     let currentPts = [];
@@ -591,7 +592,6 @@ window.optimizeSVG = async function() {
         let d = "M " + pts[0].x + " " + pts[0].y;
         for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
         
-        // On confie juste l'affichage à Fabric
         let pathObj = new fabric.Path(d, {
             fill: null, stroke: dp.isRed ? 'red' : '#2980b9', 
             strokeWidth: dp.isRed ? 2 : 3, strokeDashArray: dp.isRed ? [5, 5] : null, opacity: dp.isRed ? 0.7 : 1,
@@ -605,6 +605,7 @@ window.optimizeSVG = async function() {
 
     canvas.renderAll();
 
+    // Affichage de l'alerte
     if (hasLongBridges) {
         warningDiv.innerHTML = "⚠️ Attention : Votre image comporte des traits discontinus nécessitant un saut de la bille supérieur à 3 cm. Un trait rouge a été généré.";
         warningDiv.style.display = 'block';
@@ -615,8 +616,8 @@ window.optimizeSVG = async function() {
 };
 
 window.resetSVG = function() {
-    if(currentSvgGroup) canvas.remove(currentSvgGroup);
-    currentSvgGroup = null;
+    globalSvgString = null;
+    globalNativeStrokes = null;
     let warningDiv = document.getElementById('sunae-jump-warning');
     if(warningDiv) warningDiv.style.display = 'none';
     resetCanvas();
@@ -627,7 +628,7 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
 
-    // LE VRAI VERROU MATHÉMATIQUE DE TAILLE
+    // VERROUILLAGE MATHÉMATIQUE (Taille absolue)
     const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
     tableWidth = 600;
     tableHeight = round ? 600 : tableWidth / aspect;
@@ -640,7 +641,7 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     canvas = new fabric.Canvas('sunae-canvas', {
         width: tableWidth, 
         height: tableHeight,
-        enableRetinaScaling: false, // EMPECHE LE DÉCALAGE MOBILE/ORDI
+        enableRetinaScaling: false, // DÉSACTIVE LE DÉCALAGE DE DENSITÉ PIXEL
         isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
         selection: false
     });
@@ -715,7 +716,7 @@ window.undoStroke = function() {
 }
 
 window.resetCanvas = function() {
-    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage && o !== currentSvgGroup) canvas.remove(o); });
+    canvas.getObjects().forEach(o => { if (!o.isBackgroundImage && !o.isPreviewStroke) canvas.remove(o); });
     canvas.renderAll();
 }
 
