@@ -10,6 +10,10 @@ let tempLine = null;
 let bgImageObj = null;
 let currentSvgGroup = null;
 
+// --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
+let tableWidth = 600;
+let tableHeight = 600;
+
 const TABLE_CFG = {
     "Origin S": { round: true, rows: [6, 8, 8, 6], y_centers: [0.45, 0.15, -0.15, -0.45], w: 0.20, h: 0.24, spacing: 0.00, aspect: 1.0 },
     "Dimension S": { round: false, rows: [14, 14, 14], y_centers: [0.25, 0.0, -0.25], w: 0.11, h: 0.15, spacing: 0.015, aspect: 1300.0 / 600.0 },
@@ -127,9 +131,9 @@ function buildTextGrid() {
     const cfg = TABLE_CFG[currentTable];
     if (!cfg) return;
 
-    const center_px = canvas.width / 2.0; const center_py = canvas.height / 2.0;
+    const center_px = tableWidth / 2.0; const center_py = tableHeight / 2.0;
     let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
-    const scale_px = (canvas.width / 2.0) / xmax;
+    const scale_px = (tableWidth / 2.0) / xmax;
 
     for (let r = 0; r < cfg.rows.length; r++) {
         let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
@@ -172,12 +176,15 @@ if (svgUploadInput) {
             fabric.loadSVGFromString(f.target.result, function(objects, options) {
                 if (currentSvgGroup) canvas.remove(currentSvgGroup);
                 currentSvgGroup = fabric.util.groupSVGElements(objects, options);
+                
+                // Utilisation de la taille absolue et fixe (tableWidth / tableHeight)
                 currentSvgGroup.set({
-                    left: canvas.width / 2, top: canvas.height / 2,
+                    left: tableWidth / 2, top: tableHeight / 2,
                     originX: 'center', originY: 'center',
                     borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
                 });
-                let scale = Math.min(canvas.width / currentSvgGroup.width, canvas.height / currentSvgGroup.height) * 0.8;
+                
+                let scale = Math.min(tableWidth / currentSvgGroup.width, tableHeight / currentSvgGroup.height) * 0.8;
                 currentSvgGroup.scale(scale);
                 canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
             });
@@ -267,7 +274,7 @@ window.optimizeSVG = async function() {
                     let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
                     let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
                 }
                 processPathSegment(pts);
             }
@@ -290,7 +297,7 @@ window.optimizeSVG = async function() {
                     let ptX = p1.x + (p2.x - p1.x)*(k/count) - (obj.pathOffset ? obj.pathOffset.x : 0);
                     let ptY = p1.y + (p2.y - p1.y)*(k/count) - (obj.pathOffset ? obj.pathOffset.y : 0);
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
-                    sampledPts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                    sampledPts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
                 }
             }
             processPathSegment(sampledPts);
@@ -416,13 +423,13 @@ window.optimizeSVG = async function() {
 
     // LA FONCTION DE TRI : Priorité absolue au dessin original !
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on le laisse pour la fin de la zone)
-        if (e.isDuplicate) return 2;    // Repassage (Choix moyen)
-        return 3;                       // Vrais traits bleus du dessin (Meilleur choix, on fonce dessus)
+        if (e.isBridge) return 1;       // Sauts rouges (Pire choix)
+        if (e.isDuplicate) return 2;    // Repassage invisible (Choix moyen)
+        return 3;                       // Vrais traits bleus du dessin (Meilleur choix)
     }
 
     for(let i=0; i<nodes.length; i++) {
-        // Tri croissant pour que le pop() (qui prend le dernier élément) prenne la valeur maximale (3)
+        // Tri croissant pour que la fin du tableau contienne le meilleur score
         adjTr[i].sort((a, b) => getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx])); 
     }
 
@@ -436,7 +443,7 @@ window.optimizeSVG = async function() {
         let u = stack[stack.length - 1];
         let nextEdge = null;
         
-        // Prend toujours le meilleur score (fin de tableau)
+        // Parcourt les routes disponibles, de la fin du tableau (meilleur score) au début
         for(let i=adjTr[u].length - 1; i >= 0; i--) {
             if(!edges[adjTr[u][i].edgeIdx].used) {
                 nextEdge = adjTr[u][i]; 
@@ -520,33 +527,35 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
 
-    // --- LE SECRET DE LA LARGEUR BLOQUÉE ---
-    // Peu importe l'écran, on force une matrice mathématique interne fixe (ex: 600px).
-    // Cela garantit un rendu et un calcul absolus et identiques sur Mobile et Ordi.
+    // --- LE VERROU MATHÉMATIQUE (Fin du bug Ordi/Mobile) ---
     const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
-    let fixedW = 600;
-    let fixedH = round ? 600 : fixedW / aspect;
+    tableWidth = 600;
+    tableHeight = round ? 600 : tableWidth / aspect;
 
     if (canvas) canvas.dispose();
-    const container = document.getElementById('canvas-container');
     
-    // Le CSS s'occupera d'adapter visuellement à la taille de l'écran, 
-    // mais le canevas restera mathématiquement bloqué à 600px.
-    container.style.width = '100%';
-    container.style.maxWidth = fixedW + 'px';
-    container.style.height = 'auto';
-    container.style.aspectRatio = round ? '1 / 1' : `${fixedW} / ${fixedH}`;
-    container.style.borderRadius = isRound ? '50%' : '20px';
+    // On force la taille du DOM pour ne pas polluer l'initialisation
+    const canvasEl = document.getElementById('sunae-canvas');
+    if (canvasEl) { canvasEl.width = tableWidth; canvasEl.height = tableHeight; }
 
     canvas = new fabric.Canvas('sunae-canvas', {
-        width: fixedW, 
-        height: fixedH, 
+        width: tableWidth, 
+        height: tableHeight,
+        enableRetinaScaling: false, // DÉSACTIVE LE PIÈGE DE LA DENSITÉ PIXEL (MOBILE VS PC)
         isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
         selection: false
     });
 
-    if (isRound) canvas.clipPath = new fabric.Circle({ radius: fixedW / 2, originX: 'center', originY: 'center', left: fixedW / 2, top: fixedH / 2 });
-    else canvas.clipPath = new fabric.Rect({ width: fixedW, height: fixedH, rx: 20, ry: 20, originX: 'center', originY: 'center', left: fixedW / 2, top: fixedH / 2 });
+    // Ajustement visuel CSS (Zoom de la fenêtre sans toucher aux mathématiques de 600px)
+    const container = document.getElementById('canvas-container');
+    container.style.width = '100%';
+    container.style.maxWidth = tableWidth + 'px';
+    container.style.height = 'auto';
+    container.style.aspectRatio = round ? '1 / 1' : `${tableWidth} / ${tableHeight}`;
+    container.style.borderRadius = isRound ? '50%' : '20px';
+
+    if (isRound) canvas.clipPath = new fabric.Circle({ radius: tableWidth / 2, originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2 });
+    else canvas.clipPath = new fabric.Rect({ width: tableWidth, height: tableHeight, rx: 20, ry: 20, originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2 });
 
     canvas.freeDrawingBrush.color = '#2980b9'; canvas.freeDrawingBrush.width = 3;
 
@@ -560,10 +569,10 @@ function setupWorkspace(tableName, round, w_param, h_param) {
             let cmd = pathObj.path[i];
             if (cmd[0] === 'M' || cmd[0] === 'L') {
                 let p = fabric.util.transformPoint({x: cmd[1] - pathObj.pathOffset.x, y: cmd[2] - pathObj.pathOffset.y}, objMat);
-                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height));
+                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, tableWidth, tableHeight));
             } else if (cmd[0] === 'Q') {
                 let p = fabric.util.transformPoint({x: cmd[3] - pathObj.pathOffset.x, y: cmd[4] - pathObj.pathOffset.y}, objMat);
-                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, canvas.width, canvas.height)); 
+                absPoints.push(sanitizeCoordinates(p.x, p.y, isRound, tableWidth, tableHeight)); 
             }
         }
         pathObj.set({ selectable: false, isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: absPoints });
@@ -572,14 +581,14 @@ function setupWorkspace(tableName, round, w_param, h_param) {
 
     canvas.on('mouse:down', function(o) {
         if (currentModule !== 'Dessin Libre' || drawMode !== 'line' || document.getElementById('bille-slider').value < 100) return;
-        isDrawingLine = true; let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, canvas.width, canvas.height);
+        isDrawingLine = true; let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, tableWidth, tableHeight);
         tempLine = new fabric.Line([p.x, p.y, p.x, p.y], { strokeWidth: 3, fill: '#2980b9', stroke: '#2980b9', originX: 'center', originY: 'center', selectable: false, evented: false, isUserStroke: true, createdAt: Date.now() });
         canvas.add(tempLine);
     });
 
     canvas.on('mouse:move', function(o) {
         if (!isDrawingLine) return;
-        let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, canvas.width, canvas.height);
+        let p = sanitizeCoordinates(canvas.getPointer(o.e).x, canvas.getPointer(o.e).y, isRound, tableWidth, tableHeight);
         tempLine.set({ x2: p.x, y2: p.y }); canvas.renderAll();
     });
 
@@ -620,7 +629,7 @@ function setupBackgroundControls() {
             fabric.Image.fromURL(f.target.result, function(img) {
                 if (bgImageObj) canvas.remove(bgImageObj);
                 bgImageObj = img;
-                bgImageObj.set({ originX: 'center', originY: 'center', left: canvas.width / 2, top: canvas.height / 2, opacity: 0.5, selectable: false, evented: false, isBackgroundImage: true });
+                bgImageObj.set({ originX: 'center', originY: 'center', left: tableWidth / 2, top: tableHeight / 2, opacity: 0.5, selectable: false, evented: false, isBackgroundImage: true });
                 canvas.add(bgImageObj); bgImageObj.sendToBack(); canvas.renderAll();
             });
         };
@@ -628,7 +637,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -753,7 +762,8 @@ window.exportTHR = function() {
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
     
-    let exportData = { table: currentTable, module: currentModule, canvasWidth: canvas ? canvas.width : 600, canvasHeight: canvas ? canvas.height : 600 };
+    // On envoie le VRAI tableWidth mathématique (600) au serveur pour que les coordonnées restent parfaites
+    let exportData = { table: currentTable, module: currentModule, canvasWidth: tableWidth, canvasHeight: tableHeight };
 
     if (currentModule === 'Texte Automatique') {
         const cfg = TABLE_CFG[currentTable]; let text_lines = [];
