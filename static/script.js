@@ -16,7 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA (Ultra-rapide) ---
+// --- MOTEUR DE GRAPHES (SANDIFY / DIJKSTRA) ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -186,7 +186,7 @@ if (svgUploadInput) {
     });
 }
 
-// --- ALGORITHME DU POSTIER CHINOIS (SANDIFY NATIVE ARCHITECTURE) ---
+// --- L'ALGORITHME SANDIFY (POSTIER CHINOIS COMPLET) ---
 window.optimizeSVG = async function() {
     if(!currentSvgGroup) return;
 
@@ -198,55 +198,43 @@ window.optimizeSVG = async function() {
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
-    updateProgress(0, 'Extraction des tracés (WYSIWYG)...');
+    // --- 1. LECTURE WYSIWYG ABSOLUE (Zéro Décalage) ---
+    updateProgress(0, 'Extraction WYSIWYG...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    let objectsToProcess = currentSvgGroup._objects || [currentSvgGroup];
-    let groupMatrix = currentSvgGroup.calcTransformMatrix(); 
+    let objectsToProcess = currentSvgGroup.getObjects ? currentSvgGroup.getObjects() : [currentSvgGroup];
     
-    // --- 1. GÉNÉRATION DES NOEUDS (Graphes) ---
     let nodes = [];
-    let spatialGrid = new Map();
-    let cellSize = 2.0;
-
-    // Cette fonction garantit que si deux traits se touchent, ils utilisent le même "noeud" !
-    function addNode(p) {
-        let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
-        let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
-        
-        for(let key of keys) {
-            if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) {
-                    if(Math.hypot(n.x - p.x, n.y - p.y) < 1.0) return n.id; // Tolérance de fusion de 1px
-                }
-            }
+    // Fusion parfaite des points distants de moins de 0.5px
+    function addNode(x, y) {
+        for(let i=0; i<nodes.length; i++) {
+            if((nodes[i].x - x)*(nodes[i].x - x) + (nodes[i].y - y)*(nodes[i].y - y) < 0.25) return i; 
         }
-        let id = nodes.length;
-        let node = {x: p.x, y: p.y, id: id};
-        nodes.push(node);
-        let mainKey = `${gx},${gy}`;
-        if(!spatialGrid.has(mainKey)) spatialGrid.set(mainKey, []);
-        spatialGrid.get(mainKey).push(node);
-        return id;
+        nodes.push({x: x, y: y, adj: []});
+        return nodes.length - 1;
     }
 
     let edges = [];
+    function addEdge(u, v, isBridge = false) {
+        let d = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y);
+        let edge = { u: u, v: v, d: d, isBridge: isBridge, used: false, rendered: false };
+        nodes[u].adj.push(edge);
+        nodes[v].adj.push(edge);
+        edges.push(edge);
+    }
 
-    // Lecture mathématique parfaite
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
-        let objMat = fabric.util.multiplyTransformMatrices(groupMatrix, obj.calcTransformMatrix());
+        
+        // LA MATRICE ABSOLUE (Sans double effet !)
+        let objMat = obj.calcTransformMatrix(); 
         
         function processPathSegment(pts) {
             if(pts.length < 2) return;
-            let prevId = addNode(pts[0]);
+            let prevId = addNode(pts[0].x, pts[0].y);
             for(let j=1; j<pts.length; j++) {
-                let currId = addNode(pts[j]);
-                if(prevId !== currId) {
-                    let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
-                    // CHAQUE petit bout de trait devient une "Route" que la bille peut utiliser
-                    edges.push({ id: edges.length, u: prevId, v: currId, length: len, isDrawing: true, isBridge: false });
-                }
+                let currId = addNode(pts[j].x, pts[j].y);
+                if(prevId !== currId) addEdge(prevId, currId, false);
                 prevId = currId;
             }
         }
@@ -258,178 +246,185 @@ window.optimizeSVG = async function() {
             let len = pathEl.getTotalLength();
             if(len > 1) {
                 let pts = [];
-                for(let l=0; l<=len; l+=2) { // 2px steps
+                for(let l=0; l<=len; l+=2) { // Échantillonnage à 2px (Doux et rapide)
                     let pt = pathEl.getPointAtLength(l);
-                    let tPt = fabric.util.transformPoint({x: pt.x - (obj.pathOffset?obj.pathOffset.x:0), y: pt.y - (obj.pathOffset?obj.pathOffset.y:0)}, objMat);
-                    pts.push(sanitizeCoordinates(tPt.x, tPt.y, isRound, canvas.width, canvas.height));
+                    let ptX = pt.x; let ptY = pt.y;
+                    if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
                 }
+                let pt = pathEl.getPointAtLength(len);
+                let ptX = pt.x; let ptY = pt.y;
+                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                
                 processPathSegment(pts);
             }
         }
         else if (obj.type === 'polygon' || obj.type === 'polyline') {
             let pts = obj.points.map(pt => {
-                let tPt = fabric.util.transformPoint({x: pt.x - (obj.pathOffset?obj.pathOffset.x:0), y: pt.y - (obj.pathOffset?obj.pathOffset.y:0)}, objMat);
-                return sanitizeCoordinates(tPt.x, tPt.y, isRound, canvas.width, canvas.height);
+                let ptX = pt.x; let ptY = pt.y;
+                if (obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                return sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height);
             });
             if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
             processPathSegment(pts);
         }
         else if (obj.type === 'line') {
-            let t1 = fabric.util.transformPoint({x: obj.x1 - (obj.pathOffset?obj.pathOffset.x:0), y: obj.y1 - (obj.pathOffset?obj.pathOffset.y:0)}, objMat);
-            let t2 = fabric.util.transformPoint({x: obj.x2 - (obj.pathOffset?obj.pathOffset.x:0), y: obj.y2 - (obj.pathOffset?obj.pathOffset.y:0)}, objMat);
-            processPathSegment([sanitizeCoordinates(t1.x, t1.y, isRound, canvas.width, canvas.height), sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)]);
+            let p1x = obj.x1, p1y = obj.y1, p2x = obj.x2, p2y = obj.y2;
+            if (obj.pathOffset) { p1x -= obj.pathOffset.x; p1y -= obj.pathOffset.y; p2x -= obj.pathOffset.x; p2y -= obj.pathOffset.y; }
+            let t1 = fabric.util.transformPoint({x: p1x, y: p1y}, objMat);
+            let t2 = fabric.util.transformPoint({x: p2x, y: p2y}, objMat);
+            processPathSegment([
+                sanitizeCoordinates(t1.x, t1.y, isRound, canvas.width, canvas.height), 
+                sanitizeCoordinates(t2.x, t2.y, isRound, canvas.width, canvas.height)
+            ]);
         }
     }
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    // --- 2. KRUSKAL (Relier les zones totalement séparées, ex: oeil du chat) ---
+    // --- 2. KRUSKAL (Connexion absolue entre zones séparées sans sous-échantillonnage) ---
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
 
     let parent = new Int32Array(nodes.length);
     for(let i=0; i<nodes.length; i++) parent[i] = i;
-    function find(i) { return parent[i] === i ? i : (parent[i] = find(parent[i])); }
-    function union(i, j) { parent[find(i)] = find(j); }
-    edges.forEach(e => union(e.u, e.v));
+    function findSet(i) { return parent[i] === i ? i : (parent[i] = findSet(parent[i])); }
+    function unionSet(i, j) { parent[findSet(i)] = findSet(j); }
+    edges.forEach(e => unionSet(e.u, e.v));
     
-    let comps = new Map();
+    let comps = [];
+    let compMap = {};
     for(let i=0; i<nodes.length; i++) {
-        let root = find(i);
-        if(!comps.has(root)) comps.set(root, []);
-        comps.get(root).push(i);
+        let r = findSet(i);
+        if(compMap[r] === undefined) { compMap[r] = comps.length; comps.push([]); }
+        comps[compMap[r]].push(i);
     }
     
-    let compArray = Array.from(comps.values());
-    if(compArray.length > 1) {
-        let compEdges = [];
-        for(let i=0; i<compArray.length; i++) {
-            for(let j=i+1; j<compArray.length; j++) {
-                let minDist = Infinity; let bestU = -1, bestV = -1;
-                // Recherche exacte (sans sous-échantillonnage) pour le pont parfait
-                let c1 = compArray[i]; let c2 = compArray[j];
-                for(let ui=0; ui<c1.length; ui++) {
-                    let n1 = nodes[c1[ui]];
-                    for(let vj=0; vj<c2.length; vj++) {
-                        let n2 = nodes[c2[vj]];
-                        let d = (n1.x-n2.x)*(n1.x-n2.x) + (n1.y-n2.y)*(n1.y-n2.y);
-                        if(d < minDist) { minDist = d; bestU = n1.id; bestV = n2.id; }
+    if(comps.length > 1) {
+        let potentialBridges = [];
+        for(let i=0; i<comps.length; i++) {
+            for(let j=i+1; j<comps.length; j++) {
+                let minDist = Infinity, minU = -1, minV = -1;
+                // Calcul de force brute sur CHAQUE point : Garantie de trouver la plus petite distance
+                for(let u of comps[i]) {
+                    let nu = nodes[u];
+                    for(let v of comps[j]) {
+                        let nv = nodes[v];
+                        let dSq = (nu.x-nv.x)*(nu.x-nv.x) + (nu.y-nv.y)*(nu.y-nv.y);
+                        if(dSq < minDist) { minDist = dSq; minU = u; minV = v; }
                     }
                 }
-                compEdges.push({u: bestU, v: bestV, w: Math.sqrt(minDist), c1: i, c2: j});
+                potentialBridges.push({u: minU, v: minV, d: Math.sqrt(minDist), c1: i, c2: j});
             }
         }
-        compEdges.sort((a,b) => a.w - b.w);
-        let compParent = new Int32Array(compArray.length);
-        for(let i=0; i<compArray.length; i++) compParent[i] = i;
+        potentialBridges.sort((a,b) => a.d - b.d);
+        
+        let compParent = new Int32Array(comps.length);
+        for(let i=0; i<comps.length; i++) compParent[i] = i;
         function cFind(i) { return compParent[i] === i ? i : (compParent[i] = cFind(compParent[i])); }
         
-        compEdges.forEach(e => {
-            let r1 = cFind(e.c1); let r2 = cFind(e.c2);
+        for(let b of potentialBridges) {
+            let r1 = cFind(b.c1), r2 = cFind(b.c2);
             if(r1 !== r2) {
                 compParent[r1] = r2;
-                edges.push({id: edges.length, u: e.u, v: e.v, length: e.w, isDrawing: false, isBridge: true});
+                addEdge(b.u, b.v, true); // Ce saut obligatoire dans le vide sera ROUGE
             }
-        });
+        }
     }
 
-    // --- 3. EULERIZE (Dijkstra pour REPASSER sur les traits bleus !) ---
-    updateProgress(50, 'Routage sur traits (Postier Chinois)...');
+    // --- 3. EULERIZE (Duplication via Dijkstra pour repasser sur les traits) ---
+    updateProgress(50, 'Démêlage via graphes (Eulerize)...');
     await new Promise(r => setTimeout(r, 20));
 
-    let adj = Array.from({length: nodes.length}, () => []);
-    edges.forEach(e => { adj[e.u].push(e); adj[e.v].push(e); });
+    let odds = [];
+    for(let i=0; i<nodes.length; i++) {
+        if(nodes[i].adj.length % 2 !== 0) odds.push(i);
+    }
+
+    let passes = 0;
+    let totalOdds = odds.length;
     
-    let oddNodes = [];
-    for(let i=0; i<nodes.length; i++) if(adj[i].length % 2 !== 0) oddNodes.push(i);
-
-    // Fonction de GPS (Dijkstra)
-    function getShortestPath(startNode) {
+    while(odds.length > 0) {
+        let start = odds.pop();
+        
         let dist = new Float32Array(nodes.length).fill(Infinity);
-        let prevEdge = new Array(nodes.length).fill(null);
-        let prevNode = new Int32Array(nodes.length).fill(-1);
-        dist[startNode] = 0;
-        let pq = new MinHeap(); pq.push(startNode, 0);
-
+        let prev = new Int32Array(nodes.length).fill(-1);
+        dist[start] = 0;
+        
+        let pq = new MinHeap();
+        pq.push(start, 0);
+        
         while(!pq.isEmpty()) {
             let curr = pq.pop(); let u = curr.id;
             if(curr.dist > dist[u]) continue;
-            for(let edge of adj[u]) {
+            for(let edge of nodes[u].adj) {
                 let v = (edge.u === u) ? edge.v : edge.u;
-                let alt = dist[u] + edge.length;
-                if(alt < dist[v]) { dist[v] = alt; prevEdge[v] = edge; prevNode[v] = u; pq.push(v, alt); }
+                let nd = curr.dist + edge.d;
+                if(nd < dist[v]) {
+                    dist[v] = nd; prev[v] = u; pq.push(v, nd);
+                }
             }
         }
-        return {dist, prevEdge, prevNode};
-    }
-
-    let totalOdds = oddNodes.length;
-    let passes = 0;
-    while(oddNodes.length > 0) {
-        let start = oddNodes[0];
-        let paths = getShortestPath(start);
         
-        let bestVIdx = -1; let bestDist = Infinity;
-        for(let i=1; i<oddNodes.length; i++) {
-            let v = oddNodes[i];
-            if(paths.dist[v] < bestDist) { bestDist = paths.dist[v]; bestVIdx = i; }
+        let bestOddIdx = -1; let minDist = Infinity;
+        for(let i=0; i<odds.length; i++) {
+            if(dist[odds[i]] < minDist) { minDist = dist[odds[i]]; bestOddIdx = i; }
         }
         
-        if (bestVIdx !== -1) {
-            let targetNode = oddNodes[bestVIdx];
-            let curr = targetNode;
+        if(bestOddIdx !== -1) {
+            let target = odds[bestOddIdx];
+            odds.splice(bestOddIdx, 1);
             
-            // LA MAGIE SANDIFY : On remonte le GPS et on DUPLIQUE les routes existantes !
-            // La bille roulera sur ces doublons sans qu'on ne voie rien.
+            // Remonte le GPS et duplique les lignes existantes.
+            // La bille roulera sur la ligne (sans créer de nouvelle trace rouge) !
+            let curr = target;
             while(curr !== start) {
-                let e = paths.prevEdge[curr];
-                let dupEdge = {id: edges.length, u: e.u, v: e.v, length: e.length, isDrawing: e.isDrawing, isBridge: e.isBridge, isDuplicate: true};
-                edges.push(dupEdge);
-                adj[e.u].push(dupEdge); adj[e.v].push(dupEdge);
-                curr = paths.prevNode[curr];
+                let p = prev[curr];
+                let origEdge = nodes[curr].adj.find(e => (e.u===curr && e.v===p) || (e.v===curr && e.u===p));
+                addEdge(curr, p, origEdge ? origEdge.isBridge : false); 
+                curr = p;
             }
-            oddNodes.splice(bestVIdx, 1);
         }
-        oddNodes.splice(0, 1);
-
         passes++;
         if (passes % 10 === 0) {
-            updateProgress(50 + Math.floor((1 - (oddNodes.length / totalOdds)) * 30), 'Routage (Eulerize)...');
+            updateProgress(50 + Math.floor((1 - (odds.length / totalOdds)) * 30), 'Routage sur traits...');
             await new Promise(r => setTimeout(r, 0));
         }
     }
 
-    // --- 4. HIERHOLZER (Créer un seul trait continu) ---
-    updateProgress(85, 'Génération du trait ininterrompu...');
+    // --- 4. HIERHOLZER (Chemin ininterrompu) ---
+    updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 20));
 
-    let adjTr = Array.from({length: nodes.length}, () => []);
-    edges.forEach((e, idx) => {
-        e.used = false;
-        adjTr[e.u].push({to: e.v, edgeIdx: idx, dir: 1});
-        adjTr[e.v].push({to: e.u, edgeIdx: idx, dir: -1});
-    });
+    let startNode = 0;
+    for(let i=0; i<nodes.length; i++) { if(nodes[i].adj.length > 0) { startNode = i; break; } }
 
-    let eulerPath = [];
-    function dfs(u) {
-        while(adjTr[u].length > 0) {
-            let neighbor = adjTr[u].pop();
-            if(edges[neighbor.edgeIdx].used) continue;
-            edges[neighbor.edgeIdx].used = true;
-            dfs(neighbor.to);
-            eulerPath.push(neighbor);
+    let stack = [startNode];
+    let nodePath = [];
+
+    while(stack.length > 0) {
+        let u = stack[stack.length - 1];
+        let nextEdge = null;
+        for(let i=0; i<nodes[u].adj.length; i++) {
+            if(!nodes[u].adj[i].used) {
+                nextEdge = nodes[u].adj[i];
+                break;
+            }
+        }
+        
+        if(nextEdge) {
+            nextEdge.used = true;
+            let v = (nextEdge.u === u) ? nextEdge.v : nextEdge.u;
+            stack.push(v);
+        } else {
+            nodePath.push(stack.pop());
         }
     }
-    
-    let startNode = 0;
-    // On commence par un noeud impair s'il en reste (chemin eulérien ouvert), sinon n'importe quel noeud
-    let remainingOdds = [];
-    for(let i=0; i<nodes.length; i++) { if(adjTr[i].length % 2 !== 0) remainingOdds.push(i); }
-    if(remainingOdds.length > 0) startNode = remainingOdds[0];
-    else { for(let i=0; i<nodes.length; i++) { if(adjTr[i].length > 0) { startNode = i; break; } } }
-    
-    dfs(startNode); 
-    eulerPath.reverse();
+    nodePath.reverse();
 
     // --- 5. DESSIN WYSIWYG ---
     updateProgress(95, 'Affichage visuel...');
@@ -437,42 +432,50 @@ window.optimizeSVG = async function() {
 
     currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
-    let currentPath = [];
-    let isDrawingState = null;
-    let travelCounter = 0;
+    let displayPaths = [];
+    let currentPts = [];
+    let currentIsRed = false;
 
-    // Regroupe les petits segments en longs traits pour FabricJS
-    function drawFabricPath(pts, isDraw) {
+    for(let i=0; i<nodePath.length-1; i++) {
+        let u = nodePath[i];
+        let v = nodePath[i+1];
+        
+        // Trouve l'arête utilisée (qui n'a pas encore été dessinée visuellement)
+        let edge = nodes[u].adj.find(e => ((e.u === u && e.v === v) || (e.v === u && e.u === v)) && !e.rendered);
+        if(edge) edge.rendered = true;
+        
+        let stepIsRed = edge ? edge.isBridge : false;
+        
+        if(currentPts.length === 0) {
+            currentPts.push(nodes[u]);
+            currentIsRed = stepIsRed;
+        }
+        
+        if(currentIsRed !== stepIsRed) {
+            displayPaths.push({pts: currentPts, isRed: currentIsRed});
+            currentPts = [nodes[u], nodes[v]];
+            currentIsRed = stepIsRed;
+        } else {
+            currentPts.push(nodes[v]);
+        }
+    }
+    if(currentPts.length > 1) displayPaths.push({pts: currentPts, isRed: currentIsRed});
+
+    displayPaths.forEach((dp, i) => {
+        let pts = dp.pts;
         let d = "M " + pts[0].x + " " + pts[0].y;
         for(let j=1; j<pts.length; j++) d += " L " + pts[j].x + " " + pts[j].y;
         
         let pathObj = new fabric.Path(d, {
-            fill: null, stroke: isDraw ? '#2980b9' : 'red', 
-            strokeWidth: isDraw ? 3 : 2, strokeDashArray: isDraw ? null : [5, 5], opacity: isDraw ? 1 : 0.7,
+            fill: null, stroke: dp.isRed ? 'red' : '#2980b9', 
+            strokeWidth: dp.isRed ? 2 : 3, strokeDashArray: dp.isRed ? [5, 5] : null, opacity: dp.isRed ? 0.7 : 1,
             strokeLineCap: 'round', strokeLineJoin: 'round',
-            selectable: false, isUserStroke: isDraw, isTravelLine: !isDraw, 
-            createdAt: Date.now() + travelCounter, travelIndex: !isDraw ? travelCounter : undefined,
-            sunaeAbsPoints: pts // Parfait pour le simulateur
+            selectable: false, isUserStroke: !dp.isRed, isTravelLine: dp.isRed,
+            createdAt: Date.now() + i, travelIndex: dp.isRed ? i : undefined, sunaeAbsPoints: pts
         });
         canvas.add(pathObj);
-        if(!isDraw) pathObj.sendToBack();
-        travelCounter++;
-    }
-
-    eulerPath.forEach(step => {
-        let edge = edges[step.edgeIdx];
-        let isDraw = !edge.isBridge; // Seuls les vrais sauts dans le vide seront rouges !
-        let startPt = nodes[step.dir === 1 ? edge.u : edge.v];
-        let endPt = nodes[step.dir === 1 ? edge.v : edge.u];
-
-        if(isDrawingState !== isDraw) {
-            if(currentPath.length > 0) drawFabricPath(currentPath, isDrawingState);
-            currentPath = [startPt];
-            isDrawingState = isDraw;
-        }
-        currentPath.push(endPt);
+        if(dp.isRed) pathObj.sendToBack();
     });
-    if(currentPath.length > 0) drawFabricPath(currentPath, isDrawingState);
 
     canvas.renderAll();
 
@@ -583,7 +586,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
