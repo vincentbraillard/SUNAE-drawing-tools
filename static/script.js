@@ -5,7 +5,7 @@ let currentModule = null;
 let isRound = false;
 let globalNativeStrokes = null; 
 
-// --- VERROU MATHÉMATIQUE (WYSIWYG) ---
+// --- VERROU MATHÉMATIQUE ---
 const tableWidth = 600;
 const tableHeight = 600;
 
@@ -47,32 +47,38 @@ class MinHeap {
     isEmpty() { return this.data.length === 0; }
 }
 
-// --- NAVIGATION ---
+// --- NAVIGATION (RÉTABLIE) ---
 function goToStep(step, moduleName = null) {
+    // Désactiver toutes les sections
     document.querySelectorAll('.step-section').forEach(el => el.classList.remove('active'));
+    
+    // Activer la section cible
     const target = document.getElementById('step-' + step);
     if(target) target.classList.add('active');
     
-    if (moduleName) {
+    // Gestion spécifique du module de travail (Etape 3)
+    if (step === 3 && moduleName) {
         currentModule = moduleName;
         document.getElementById('workspace-title').innerText = currentModule + " | " + currentTable;
         document.getElementById('module-workspace').style.display = 'block';
         
-        // Affichage des outils SVG uniquement si nécessaire
-        const toolsSvg = document.getElementById('tools-svg');
-        if(toolsSvg) toolsSvg.style.display = (moduleName === 'Fichier SVG') ? 'block' : 'none';
+        // Affichage conditionnel des outils
+        document.getElementById('tools-svg').style.display = (moduleName === 'Fichier SVG') ? 'block' : 'none';
         
         if (canvas) { canvas.clear(); }
     }
 }
 
-// --- INITIALISATION DU CANEVAS (REFIXÉ) ---
+// --- INITIALISATION DE LA TABLE (RÉTABLIE) ---
 function setupWorkspace(tableName, round) {
     currentTable = tableName; 
     isRound = round;
-    const aspect = TABLE_CFG[tableName].aspect;
+    
+    const cfg = TABLE_CFG[tableName];
+    const aspect = cfg ? cfg.aspect : 1.0;
     let h = round ? tableWidth : tableWidth / aspect;
     
+    // Reset du canvas Fabric
     if (canvas) canvas.dispose();
     canvas = new fabric.Canvas('sunae-canvas', { 
         width: tableWidth, 
@@ -81,13 +87,18 @@ function setupWorkspace(tableName, round) {
         selection: false 
     });
     
+    // Ajustement visuel du container
     const container = document.getElementById('canvas-container');
-    container.style.maxWidth = tableWidth + 'px';
+    if(container) {
+        container.style.maxWidth = tableWidth + 'px';
+        container.style.aspectRatio = `${tableWidth} / ${h}`;
+    }
     
-    goToStep(2); // On passe au choix de l'expérience
+    // On passe au choix de l'expérience
+    goToStep(2);
 }
 
-// --- EXTRACTION NATIVE DU SVG (SANS FABRIC POUR LES CALCULS) ---
+// --- EXTRACTION NATIVE DU SVG (SANS FABRIC) ---
 function extractSVGData(svgString) {
     let container = document.createElement('div');
     container.style.position = 'absolute'; container.style.visibility = 'hidden';
@@ -112,7 +123,7 @@ function extractSVGData(svgString) {
             pathData = 'M ' + pts + (el.tagName.toLowerCase() === 'polygon' ? ' Z' : '');
         }
 
-        // DÉCOUPAGE MOVE-TO (Supprime les traits bleus de liaison)
+        // COUPE STRICTE (Élimine les traits bleus de liaison)
         let segments = pathData.split(/[Mm]/);
         segments.forEach(seg => {
             if(!seg.trim()) return;
@@ -144,14 +155,14 @@ function extractSVGData(svgString) {
     })));
 }
 
-// --- CHARGEMENT ---
+// --- MODULE SVG UPLOAD ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
         const reader = new FileReader();
         reader.onload = function(f) {
             globalNativeStrokes = extractSVGData(f.target.result);
-            if(globalNativeStrokes) {
+            if(canvas && globalNativeStrokes) {
                 canvas.clear();
                 globalNativeStrokes.forEach(s => {
                     canvas.add(new fabric.Polyline(s, { fill:null, stroke:'#9b59b6', strokeWidth:2, opacity:0.4, selectable:false }));
@@ -193,7 +204,6 @@ window.optimizeSVG = async function() {
         }
     });
 
-    // Kruskal pour les ponts obligatoires
     let parent = nodes.map((_, i) => i);
     function find(i) { return parent[i] === i ? i : (parent[i] = find(parent[i])); }
     edges.forEach(e => { let r1 = find(e.u), r2 = find(e.v); if(r1 !== r2) parent[r1] = r2; });
@@ -227,7 +237,6 @@ window.optimizeSVG = async function() {
         });
     }
 
-    // Dijkstra avec pénalité 1M
     let odds = nodes.filter(n => n.adj.length % 2 !== 0).map(n => n.id);
     while(odds.length > 0) {
         let start = odds.pop(), dists = new Float32Array(nodes.length).fill(Infinity), prevs = new Int32Array(nodes.length).fill(-1);
@@ -237,7 +246,7 @@ window.optimizeSVG = async function() {
             if(dist > dists[u]) continue;
             nodes[u].adj.forEach(e => {
                 let v = e.u === u ? e.v : e.u;
-                let w = e.isBridge ? e.d * 1000000 : e.d; 
+                let w = e.isBridge ? e.d * 1000000 : e.d; // PÉNALITÉ
                 if(dists[u] + w < dists[v]) { dists[v] = dists[u] + w; prevs[v] = u; pq.push(v, dists[v]); }
             });
         }
@@ -254,7 +263,6 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // Hierholzer + Tri
     function getScore(e) { if(e.isBridge) return 1; if(e.isDuplicate) return 2; return 3; }
     nodes.forEach(n => n.adj.sort((a,b) => getScore(b) - getScore(a)));
 
