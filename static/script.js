@@ -16,7 +16,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA ---
+// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA (Ultra-rapide) ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -204,6 +204,7 @@ window.optimizeSVG = async function() {
     let objectsToProcess = currentSvgGroup.type === 'group' ? currentSvgGroup.getObjects() : [currentSvgGroup];
     let groupMatrix = currentSvgGroup.calcTransformMatrix(); 
     
+    // --- 1. GÉNÉRATION DES NOEUDS (Graphes) ---
     let nodes = [];
     let spatialGrid = new Map();
     let cellSize = 2.0;
@@ -211,6 +212,7 @@ window.optimizeSVG = async function() {
     function addNode(p) {
         let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
+        
         for(let key of keys) {
             if(spatialGrid.has(key)) {
                 for(let n of spatialGrid.get(key)) {
@@ -232,11 +234,14 @@ window.optimizeSVG = async function() {
         if (u === v) return;
         let d = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y);
         let edge = { u: u, v: v, d: d, isBridge: isBridge, isDuplicate: isDuplicate, used: false, rendered: false };
-        nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
+        nodes[u].adj.push(edge);
+        nodes[v].adj.push(edge);
+        edges.push(edge);
     }
 
     for(let i=0; i<objectsToProcess.length; i++) {
         let obj = objectsToProcess[i];
+        
         let objMat = obj.calcTransformMatrix(); 
         if (currentSvgGroup.type === 'group') {
             objMat = fabric.util.multiplyTransformMatrices(groupMatrix, objMat);
@@ -267,6 +272,12 @@ window.optimizeSVG = async function() {
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                     pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
                 }
+                let pt = pathEl.getPointAtLength(len);
+                let ptX = pt.x; let ptY = pt.y;
+                if(obj.pathOffset) { ptX -= obj.pathOffset.x; ptY -= obj.pathOffset.y; }
+                let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, canvas.width, canvas.height));
+                
                 processPathSegment(pts);
             }
         }
@@ -297,7 +308,7 @@ window.optimizeSVG = async function() {
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    // --- 1. KRUSKAL (Connexion absolue entre zones séparées) ---
+    // --- 2. KRUSKAL ---
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -347,7 +358,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // --- 2. EULERIZE (Dijkstra pour repasser sur les traits) ---
+    // --- 3. EULERIZE (Dijkstra pour repasser sur les traits existants) ---
     updateProgress(50, 'Routage sur traits (Postier Chinois)...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -356,7 +367,8 @@ window.optimizeSVG = async function() {
         if(nodes[i].adj.length % 2 !== 0) odds.push(i);
     }
 
-    let passes = 0; let totalOdds = odds.length;
+    let passes = 0;
+    let totalOdds = odds.length;
     
     while(odds.length > 0) {
         let start = odds.pop();
@@ -400,50 +412,50 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // --- 3. HIERHOLZER (Création du chemin ordonné avec SCORE) ---
+    // --- 4. HIERHOLZER (Chemin continu AVEC TRI HEURISTIQUE) ---
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 20));
 
-    let adjTr = Array.from({length: nodes.length}, () => []);
-    edges.forEach((e, idx) => {
-        e.used = false;
-        adjTr[e.u].push({to: e.v, edgeIdx: idx, dir: 1});
-        adjTr[e.v].push({to: e.u, edgeIdx: idx, dir: -1});
-    });
-
-    // --- LE CORRECTIF DE L'ORDRE DES ZONES : LE TRI HEURISTIQUE ---
+    // LE VOICI ! Le tri qui oblige la bille à finir une zone avant de sauter ailleurs.
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Sauts rouges dans le vide = PIR PIORITÉ, pris en dernier
-        if (e.isDuplicate) return 2;    // Repassage = Choix moyen
-        return 3;                       // Vrai dessin bleu = PRIORITÉ MAX, pris en premier
+        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix, on les garde pour la fin)
+        if (e.isDuplicate) return 2;    // Repassage invisible (Choix moyen)
+        return 3;                       // Vrais traits bleus du dessin (Meilleur choix, on fonce dessus)
     }
 
     for(let i=0; i<nodes.length; i++) {
-        adjTr[i].sort((a, b) => {
-            // L'élément pop() prend à la fin du tableau.
-            // On veut que le "meilleur" score (3) soit à la fin.
-            return getEdgeScore(edges[a.edgeIdx]) - getEdgeScore(edges[b.edgeIdx]);
-        });
+        // On trie de manière DÉCROISSANTE (3 puis 2 puis 1).
+        // Dans la boucle ci-dessous, on prendra toujours l'index 0 en priorité.
+        nodes[i].adj.sort((a, b) => getEdgeScore(b) - getEdgeScore(a)); 
     }
 
-    let eulerPath = [];
-    function dfs(u) {
-        while(adjTr[u].length > 0) {
-            let neighbor = adjTr[u].pop(); // Grâce au tri, il prend toujours le dessin (3) avant le pont (1) !
-            if(edges[neighbor.edgeIdx].used) continue;
-            edges[neighbor.edgeIdx].used = true;
-            dfs(neighbor.to);
-            eulerPath.push(neighbor);
+    let startNode = 0;
+    for(let i=0; i<nodes.length; i++) { if(nodes[i].adj.length > 0) { startNode = i; break; } }
+
+    let stack = [startNode];
+    let nodePath = [];
+
+    while(stack.length > 0) {
+        let u = stack[stack.length - 1];
+        let nextEdge = null;
+        for(let i=0; i<nodes[u].adj.length; i++) {
+            if(!nodes[u].adj[i].used) {
+                nextEdge = nodes[u].adj[i]; // Prend le meilleur score grâce au tri !
+                break;
+            }
+        }
+        
+        if(nextEdge) {
+            nextEdge.used = true;
+            let v = (nextEdge.u === u) ? nextEdge.v : nextEdge.u;
+            stack.push(v);
+        } else {
+            nodePath.push(stack.pop());
         }
     }
-    
-    let startNode = 0;
-    for(let i=0; i<nodes.length; i++) { if(adjTr[i].length > 0) { startNode = i; break; } }
-    
-    dfs(startNode); 
-    eulerPath.reverse();
+    nodePath.reverse();
 
-    // --- 4. DESSIN WYSIWYG ---
+    // --- 5. DESSIN WYSIWYG ---
     updateProgress(95, 'Affichage visuel...');
     await new Promise(r => setTimeout(r, 10));
 
@@ -453,14 +465,14 @@ window.optimizeSVG = async function() {
     let currentPts = [];
     let currentIsRed = false;
 
-    for(let i=0; i<eulerPath.length; i++) {
-        let step = eulerPath[i];
-        let edge = edges[step.edgeIdx];
+    for(let i=0; i<nodePath.length-1; i++) {
+        let u = nodePath[i];
+        let v = nodePath[i+1];
         
-        let u = step.dir === 1 ? edge.u : edge.v;
-        let v = step.dir === 1 ? edge.v : edge.u;
+        let edge = nodes[u].adj.find(e => ((e.u === u && e.v === v) || (e.v === u && e.u === v)) && !e.rendered);
+        if(edge) edge.rendered = true;
         
-        let stepIsRed = edge.isBridge;
+        let stepIsRed = edge ? edge.isBridge : false;
         
         if(currentPts.length === 0) {
             currentPts.push(nodes[u]);
@@ -602,7 +614,7 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
+// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE UNIQUEMENT) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
