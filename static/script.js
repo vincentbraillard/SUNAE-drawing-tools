@@ -9,9 +9,8 @@ let isDrawingLine = false;
 let tempLine = null;
 let bgImageObj = null;
 let currentSvgGroup = null;
-let globalSvgString = null; // Stocke le code SVG brut pour la lecture native
 
-// --- VARIABLES FIXES ---
+// --- VARIABLES FIXES POUR VERROUILLER LES MATHÉMATIQUES ---
 let tableWidth = 600;
 let tableHeight = 600;
 
@@ -21,7 +20,7 @@ const TABLE_CFG = {
     "Dimension L": { round: false, rows: [20, 20, 20, 20], y_centers: [0.27, 0.09, -0.09, -0.27], w: 0.075, h: 0.11, spacing: 0.01, aspect: 1900.0 / 900.0 }
 };
 
-// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA ---
+// --- MIN-HEAP POUR LE ROUTAGE DIJKSTRA (Ultra-rapide) ---
 class MinHeap {
     constructor() { this.data = []; }
     push(id, dist) { this.data.push({id, dist}); this.up(this.data.length - 1); }
@@ -166,7 +165,7 @@ window.resetTextGrid = function() {
     document.getElementById('export-filename').placeholder = "Texte_Sunae";
 }
 
-// --- MODULE SVG UPLOAD ---
+// --- MODULE SVG ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -174,13 +173,18 @@ if (svgUploadInput) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(f) {
-            globalSvgString = f.target.result; // On sauvegarde le code brut pour l'extraction native
-            
-            // Preview basique via FabricJS juste pour montrer que le fichier est chargé
-            fabric.loadSVGFromString(globalSvgString, function(objects, options) {
+            // Nettoyage de l'alerte potentielle du dessin précédent
+            let warningDiv = document.getElementById('sunae-jump-warning');
+            if(warningDiv) warningDiv.style.display = 'none';
+
+            fabric.loadSVGFromString(f.target.result, function(objects, options) {
                 if (currentSvgGroup) canvas.remove(currentSvgGroup);
                 currentSvgGroup = fabric.util.groupSVGElements(objects, options);
-                currentSvgGroup.set({ left: tableWidth / 2, top: tableHeight / 2, originX: 'center', originY: 'center', opacity: 0.4 });
+                currentSvgGroup.set({
+                    left: tableWidth / 2, top: tableHeight / 2,
+                    originX: 'center', originY: 'center',
+                    borderColor: '#9b59b6', cornerColor: '#9b59b6', transparentCorners: false
+                });
                 let scale = Math.min(tableWidth / currentSvgGroup.width, tableHeight / currentSvgGroup.height) * 0.8;
                 currentSvgGroup.scale(scale);
                 canvas.add(currentSvgGroup); canvas.setActiveObject(currentSvgGroup); canvas.renderAll();
@@ -190,118 +194,56 @@ if (svgUploadInput) {
     });
 }
 
-// --- L'ALGORITHME SANDIFY (EXTRACTION NATIVE + POSTIER CHINOIS) ---
+// --- ALGORITHME DU POSTIER CHINOIS ---
 window.optimizeSVG = async function() {
-    if(!globalSvgString) return;
+    if(!currentSvgGroup) return;
 
     const btn = document.getElementById('btn-optimize-svg');
     const pContainer = document.getElementById('svg-progress-container');
     const pBar = document.getElementById('svg-progress-bar');
     const pText = document.getElementById('svg-progress-text');
+    
+    // Création / Gestion du bandeau d'alerte
+    let warningDiv = document.getElementById('sunae-jump-warning');
+    if(!warningDiv) {
+        warningDiv = document.createElement('div');
+        warningDiv.id = 'sunae-jump-warning';
+        warningDiv.style.marginTop = '10px';
+        warningDiv.style.marginBottom = '10px';
+        warningDiv.style.padding = '10px';
+        warningDiv.style.backgroundColor = '#fff3cd';
+        warningDiv.style.color = '#856404';
+        warningDiv.style.border = '1px solid #ffeeba';
+        warningDiv.style.borderRadius = '5px';
+        warningDiv.style.fontWeight = 'bold';
+        warningDiv.style.textAlign = 'center';
+        warningDiv.style.display = 'none';
+        document.getElementById('canvas-container').parentNode.insertBefore(warningDiv, document.getElementById('canvas-container'));
+    }
+    warningDiv.style.display = 'none';
 
     btn.disabled = true; btn.style.opacity = '0.5'; pContainer.style.display = 'block';
     function updateProgress(pct, textMsg) { pBar.style.width = pct + '%'; pText.innerText = textMsg + ' (' + pct + '%)'; }
 
-    updateProgress(0, 'Extraction géométrique absolue...');
+    updateProgress(0, 'Extraction WYSIWYG...');
     await new Promise(r => setTimeout(r, 50)); 
     
-    // --- BYPASS FABRIC.JS : Création d'un DOM caché ---
-    let hiddenDiv = document.getElementById('sunae-hidden-svg');
-    if(!hiddenDiv) {
-        hiddenDiv = document.createElement('div');
-        hiddenDiv.id = 'sunae-hidden-svg';
-        hiddenDiv.style.position = 'absolute';
-        hiddenDiv.style.visibility = 'hidden';
-        hiddenDiv.style.width = '1000px';
-        hiddenDiv.style.height = '1000px';
-        hiddenDiv.style.top = '-9999px';
-        document.body.appendChild(hiddenDiv);
-    }
-    hiddenDiv.innerHTML = globalSvgString;
-    let svgEl = hiddenDiv.querySelector('svg');
+    let objectsToProcess = currentSvgGroup.type === 'group' ? currentSvgGroup.getObjects() : [currentSvgGroup];
+    let groupMatrix = currentSvgGroup.calcTransformMatrix(); 
     
-    if(!svgEl) { alert("Format SVG non reconnu"); btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
-
-    let elements = svgEl.querySelectorAll('path, line, polyline, polygon');
-    let ptMaker = svgEl.createSVGPoint();
-    let tempStrokes = [];
-    
-    // Pour calculer le VRAI centre de l'encre
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-    elements.forEach(el => {
-        try {
-            let ctm = el.getCTM();
-            if(!ctm) return;
-            
-            function applyTransform(x, y) {
-                ptMaker.x = x; ptMaker.y = y;
-                let t = ptMaker.matrixTransform(ctm);
-                if(t.x < minX) minX = t.x; if(t.x > maxX) maxX = t.x;
-                if(t.y < minY) minY = t.y; if(t.y > maxY) maxY = t.y;
-                return {x: t.x, y: t.y};
-            }
-
-            if (el.tagName.toLowerCase() === 'path') {
-                let len = el.getTotalLength();
-                if (len > 0) {
-                    let stroke = [];
-                    for (let l = 0; l <= len; l += 2) {
-                        let p = el.getPointAtLength(l);
-                        stroke.push(applyTransform(p.x, p.y));
-                    }
-                    tempStrokes.push(stroke);
-                }
-            } else if (el.tagName.toLowerCase() === 'polygon' || el.tagName.toLowerCase() === 'polyline') {
-                let stroke = [];
-                for(let i=0; i<el.points.numberOfItems; i++) {
-                    let p = el.points.getItem(i);
-                    stroke.push(applyTransform(p.x, p.y));
-                }
-                if(el.tagName.toLowerCase() === 'polygon' && stroke.length > 0) stroke.push(stroke[0]);
-                
-                let sampled = [];
-                for(let i=0; i<stroke.length-1; i++) {
-                    let p1 = stroke[i], p2 = stroke[i+1];
-                    let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                    let steps = Math.max(1, Math.floor(d / 2));
-                    for(let j=0; j<=steps; j++) {
-                        sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                    }
-                }
-                tempStrokes.push(sampled);
-            } else if (el.tagName.toLowerCase() === 'line') {
-                let p1 = applyTransform(el.x1.baseVal.value, el.y1.baseVal.value);
-                let p2 = applyTransform(el.x2.baseVal.value, el.y2.baseVal.value);
-                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                let steps = Math.max(1, Math.floor(d / 2));
-                let sampled = [];
-                for(let j=0; j<=steps; j++) {
-                    sampled.push({ x: p1.x + (p2.x - p1.x)*(j/steps), y: p1.y + (p2.y - p1.y)*(j/steps) });
-                }
-                tempStrokes.push(sampled);
-            }
-        } catch(e) { console.warn(e); }
-    });
-
-    // NORMALISATION ABSOLUE : On force le dessin à faire 80% de la table, centré parfaitement.
-    let inkW = maxX - minX; let inkH = maxY - minY;
-    if(inkW <= 0) inkW = 1; if(inkH <= 0) inkH = 1;
-    
-    let scale = Math.min((tableWidth * 0.8) / inkW, (tableHeight * 0.8) / inkH);
-    let cx = minX + inkW / 2;
-    let cy = minY + inkH / 2;
-
+    // --- 1. GÉNÉRATION DES NOEUDS (Graphes) ---
     let nodes = [];
     let spatialGrid = new Map();
-    let cellSize = 2.0;
+    let cellSize = 3.0; // Tolérance de fusion (Welding)
 
     function addNode(p) {
         let gx = Math.floor(p.x / cellSize); let gy = Math.floor(p.y / cellSize);
         let keys = [`${gx},${gy}`, `${gx-1},${gy}`, `${gx+1},${gy}`, `${gx},${gy-1}`, `${gx},${gy+1}`, `${gx-1},${gy-1}`, `${gx+1},${gy+1}`, `${gx-1},${gy+1}`, `${gx+1},${gy-1}`];
         for(let key of keys) {
             if(spatialGrid.has(key)) {
-                for(let n of spatialGrid.get(key)) { if(Math.hypot(n.x - p.x, n.y - p.y) < 1.0) return n.id; }
+                for(let n of spatialGrid.get(key)) {
+                    if(Math.hypot(n.x - p.x, n.y - p.y) < 3.0) return n.id; 
+                }
             }
         }
         let id = nodes.length;
@@ -321,29 +263,75 @@ window.optimizeSVG = async function() {
         nodes[u].adj.push(edge); nodes[v].adj.push(edge); edges.push(edge);
     }
 
-    tempStrokes.forEach(stroke => {
-        if(stroke.length < 2) return;
-        let scaledStroke = stroke.map(p => {
-            let sx = (tableWidth / 2) + (p.x - cx) * scale;
-            let sy = (tableHeight / 2) + (p.y - cy) * scale;
-            return sanitizeCoordinates(sx, sy, isRound, tableWidth, tableHeight);
-        });
-        
-        let prevId = addNode(scaledStroke[0]);
-        for(let j=1; j<scaledStroke.length; j++) {
-            let currId = addNode(scaledStroke[j]);
-            let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
-            // Filtre anti-saut invisible
-            if (len < 20) { addEdge(prevId, currId, false, false); }
-            prevId = currId;
+    for(let i=0; i<objectsToProcess.length; i++) {
+        let obj = objectsToProcess[i];
+        let objMat = obj.calcTransformMatrix(); 
+        if (currentSvgGroup.type === 'group') {
+            objMat = fabric.util.multiplyTransformMatrices(groupMatrix, objMat);
         }
-    });
+        
+        function processPathSegment(pts) {
+            if(pts.length < 2) return;
+            let prevId = addNode(pts[0]);
+            for(let j=1; j<pts.length; j++) {
+                let currId = addNode(pts[j]);
+                let len = Math.hypot(nodes[prevId].x - nodes[currId].x, nodes[prevId].y - nodes[currId].y);
+                if (len < 20) { addEdge(prevId, currId, false, false); }
+                prevId = currId;
+            }
+        }
+
+        if (obj.type === 'path') {
+            let svgNS = "http://www.w3.org/2000/svg";
+            let pathEl = document.createElementNS(svgNS, "path");
+            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
+            let len = pathEl.getTotalLength();
+            if(len > 1) {
+                let pts = [];
+                for(let l=0; l<=len; l+=2) { 
+                    let pt = pathEl.getPointAtLength(l);
+                    let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
+                    let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
+                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                    pts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
+                }
+                processPathSegment(pts);
+            }
+        }
+        else if (obj.type === 'polygon' || obj.type === 'polyline' || obj.type === 'line') {
+            let pts = [];
+            if (obj.type === 'line') {
+                pts = [{x: obj.x1, y: obj.y1}, {x: obj.x2, y: obj.y2}];
+            } else {
+                pts = [...obj.points];
+                if (obj.type === 'polygon' && pts.length > 0) pts.push(pts[0]);
+            }
+            
+            let sampledPts = [];
+            for(let j=0; j<pts.length-1; j++) {
+                let p1 = pts[j]; let p2 = pts[j+1];
+                let d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                let count = Math.max(1, Math.floor(d / 2));
+                for(let k=0; k<=count; k++) {
+                    let ptX = p1.x + (p2.x - p1.x)*(k/count) - (obj.pathOffset ? obj.pathOffset.x : 0);
+                    let ptY = p1.y + (p2.y - p1.y)*(k/count) - (obj.pathOffset ? obj.pathOffset.y : 0);
+                    let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                    sampledPts.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
+                }
+            }
+            processPathSegment(sampledPts);
+        }
+    }
 
     if (edges.length === 0) { btn.disabled = false; btn.style.opacity = '1'; pContainer.style.display = 'none'; return; }
 
-    // --- 2. KRUSKAL (Connexion absolue entre zones séparées) ---
+    // --- 2. KRUSKAL ET LIMITE DE SAUT ---
     updateProgress(30, 'Calcul des ponts minimaux (Kruskal)...');
     await new Promise(r => setTimeout(r, 20));
+
+    // Définition de la distance maximale acceptée (~3cm à l'échelle)
+    const MAX_JUMP_PX = 40; 
+    let hasLongBridges = false;
 
     let parent = new Int32Array(nodes.length);
     for(let i=0; i<nodes.length; i++) parent[i] = i;
@@ -386,13 +374,19 @@ window.optimizeSVG = async function() {
             let r1 = cFind(b.c1), r2 = cFind(b.c2);
             if(r1 !== r2) {
                 compParent[r1] = r2;
+                
+                // DÉTECTION DES SAUTS TROP LONGS !
+                if (b.d > MAX_JUMP_PX) {
+                    hasLongBridges = true;
+                }
+                
                 addEdge(b.u, b.v, true, false); 
             }
         }
     }
 
-    // --- 3. EULERIZE (Dijkstra pour repasser sur les traits) ---
-    updateProgress(50, 'Routage sur traits (Postier Chinois)...');
+    // --- 3. EULERIZE (Dijkstra agressif) ---
+    updateProgress(50, 'Routage agressif sur traits...');
     await new Promise(r => setTimeout(r, 20));
 
     let odds = [];
@@ -416,7 +410,10 @@ window.optimizeSVG = async function() {
             if(curr.dist > dist[u]) continue;
             for(let edge of nodes[u].adj) {
                 let v = (edge.u === u) ? edge.v : edge.u;
-                let nd = curr.dist + edge.d;
+                // PÉNALITÉ DE L'EXTRÊME : Force la bille à rester sur le bleu
+                let cost = edge.isBridge ? (edge.d * 10000) : edge.d;
+                let nd = curr.dist + cost;
+                
                 if(nd < dist[v]) { dist[v] = nd; prev[v] = u; pq.push(v, nd); }
             }
         }
@@ -445,7 +442,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // --- 4. HIERHOLZER (Chemin continu AVEC TRI HEURISTIQUE) ---
+    // --- 4. HIERHOLZER (Chemin continu avec Tri) ---
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 20));
 
@@ -456,11 +453,10 @@ window.optimizeSVG = async function() {
         adjTr[e.v].push({to: e.u, edgeIdx: idx, dir: -1});
     });
 
-    // LA FONCTION DE TRI : Priorité absolue au dessin original !
     function getEdgeScore(e) {
-        if (e.isBridge) return 1;       // Les sauts rouges (Pire choix)
-        if (e.isDuplicate) return 2;    // Repassage invisible (Choix moyen)
-        return 3;                       // Vrais traits bleus du dessin (Meilleur choix)
+        if (e.isBridge) return 1;       
+        if (e.isDuplicate) return 2;    
+        return 3;                       
     }
 
     for(let i=0; i<nodes.length; i++) {
@@ -497,8 +493,7 @@ window.optimizeSVG = async function() {
     updateProgress(95, 'Affichage visuel...');
     await new Promise(r => setTimeout(r, 10));
 
-    // Suppression de l'ancienne preview Fabric
-    if(currentSvgGroup) { canvas.remove(currentSvgGroup); currentSvgGroup = null; }
+    currentSvgGroup.set({opacity: 0, selectable: false, evented: false});
     
     let displayPaths = [];
     let currentPts = [];
@@ -546,6 +541,12 @@ window.optimizeSVG = async function() {
 
     canvas.renderAll();
 
+    // Affichage de l'alerte si des sauts trop longs ont été détectés
+    if (hasLongBridges) {
+        warningDiv.innerHTML = "⚠️ Attention : Votre image comporte des traits discontinus nécessitant un saut de la bille supérieur à 3 cm. Un trait rouge a été généré.";
+        warningDiv.style.display = 'block';
+    }
+
     updateProgress(100, 'Terminé !');
     setTimeout(() => { pContainer.style.display = 'none'; btn.disabled = false; btn.style.opacity = '1'; }, 1000);
 };
@@ -553,6 +554,8 @@ window.optimizeSVG = async function() {
 window.resetSVG = function() {
     if(currentSvgGroup) canvas.remove(currentSvgGroup);
     currentSvgGroup = null;
+    let warningDiv = document.getElementById('sunae-jump-warning');
+    if(warningDiv) warningDiv.style.display = 'none';
     resetCanvas();
 }
 
@@ -561,26 +564,23 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     currentTable = tableName; isRound = round;
     goToStep(3, currentModule || 'Dessin Libre');
 
-    // VERROUILLAGE MATHÉMATIQUE (Taille absolue)
     const aspect = TABLE_CFG[tableName] ? TABLE_CFG[tableName].aspect : 1;
     tableWidth = 600;
     tableHeight = round ? 600 : tableWidth / aspect;
 
     if (canvas) canvas.dispose();
 
-    // Empêcher FabricJS d'inventer des résolutions
     const canvasEl = document.getElementById('sunae-canvas');
     if (canvasEl) { canvasEl.width = tableWidth; canvasEl.height = tableHeight; }
 
     canvas = new fabric.Canvas('sunae-canvas', {
         width: tableWidth, 
         height: tableHeight,
-        enableRetinaScaling: false, // BLOQUE L'INTERFÉRENCE DES ÉCRANS DE TÉLÉPHONES
+        enableRetinaScaling: false,
         isDrawingMode: (currentModule === 'Dessin Libre' && drawMode === 'freedraw'), 
         selection: false
     });
 
-    // Zoom visuel avec le CSS
     const container = document.getElementById('canvas-container');
     container.style.width = '100%';
     container.style.maxWidth = tableWidth + 'px';
@@ -671,7 +671,6 @@ function setupBackgroundControls() {
     });
 }
 
-// --- LIGNES DE VOYAGE (POUR LE DESSIN LIBRE) ---
 function getStrokeStart(stroke) {
     if (stroke.type === 'path' && stroke.sunaeAbsPoints && stroke.sunaeAbsPoints.length > 0) return stroke.sunaeAbsPoints[0];
     return { x: stroke.origX1 !== undefined ? stroke.origX1 : stroke.x1, y: stroke.origY1 !== undefined ? stroke.origY1 : stroke.y1 };
@@ -704,7 +703,6 @@ function updateTravelLines() {
     canvas.renderAll();
 }
 
-// --- LE SIMULATEUR ANIMÉ UNIFIÉ ---
 function setupSimulator() {
     const slider = document.getElementById('bille-slider');
     let simOverlay = document.getElementById('sim-overlay');
@@ -791,12 +789,10 @@ function setupSimulator() {
     });
 }
 
-// --- EXPORTATION ---
 window.exportTHR = function() {
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
     
-    // Le serveur recevra TOUJOURS la matrice absolue (tableWidth / tableHeight)
     let exportData = { table: currentTable, module: currentModule, canvasWidth: tableWidth, canvasHeight: tableHeight };
 
     if (currentModule === 'Texte Automatique') {
