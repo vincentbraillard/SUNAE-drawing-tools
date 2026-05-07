@@ -202,6 +202,7 @@ window.optimizeSVG = async function() {
     const pBar = document.getElementById('svg-progress-bar');
     const pText = document.getElementById('svg-progress-text');
     
+    // GESTION DU BANDEAU D'ALERTE
     let warningDiv = document.getElementById('sunae-jump-warning');
     if(!warningDiv) {
         warningDiv = document.createElement('div');
@@ -280,38 +281,46 @@ window.optimizeSVG = async function() {
         }
 
         if (obj.type === 'path') {
+            // CORRECTION MAGIQUE : On découpe le trait si le fichier SVG demande de lever le crayon (MoveTo)
+            let subpaths = [];
+            let currentSubpath = [];
+            
+            obj.path.forEach(cmd => {
+                if ((cmd[0] === 'M' || cmd[0] === 'm') && currentSubpath.length > 0) {
+                    subpaths.push(currentSubpath);
+                    currentSubpath = [cmd]; // On lève le crayon et on crée une nouvelle section
+                } else {
+                    currentSubpath.push(cmd);
+                }
+            });
+            if (currentSubpath.length > 0) subpaths.push(currentSubpath);
+
             let svgNS = "http://www.w3.org/2000/svg";
-            let pathEl = document.createElementNS(svgNS, "path");
-            pathEl.setAttribute('d', obj.path.map(cmd => cmd.join(' ')).join(' '));
-            let len = pathEl.getTotalLength();
-            if(len > 1) {
-                let stroke = [];
-                let prevPt = null;
+            
+            subpaths.forEach(sub => {
+                let pathEl = document.createElementNS(svgNS, "path");
+                pathEl.setAttribute('d', sub.map(cmd => cmd.join(' ')).join(' '));
+                let len = pathEl.getTotalLength();
                 
-                for(let l=0; l<=len; l+=2) { 
-                    let pt = pathEl.getPointAtLength(l);
-                    
-                    // --- SOLUTION NATIVE CONTRE LES TRAITS PARASITES ---
-                    // On vérifie la distance pure AVANT la matrice. 
-                    // Si on saute de plus de 5 unités mathématiques d'un coup (alors qu'on avance de 2 en 2), 
-                    // c'est que le crayon s'est levé (MoveTo caché). On coupe le trait !
-                    if (prevPt) {
-                        let internalDist = Math.hypot(pt.x - prevPt.x, pt.y - prevPt.y);
-                        if (internalDist > 5) { 
-                            if (stroke.length > 1) processPathSegment(stroke);
-                            stroke = []; 
-                        }
+                if(len > 1) {
+                    let stroke = [];
+                    for(let l=0; l<=len; l+=2) { 
+                        let pt = pathEl.getPointAtLength(l);
+                        let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
+                        let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
+                        let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
+                        stroke.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
                     }
-                    
+                    // Capture précise du tout dernier point du sous-chemin
+                    let pt = pathEl.getPointAtLength(len);
                     let ptX = pt.x - (obj.pathOffset ? obj.pathOffset.x : 0);
                     let ptY = pt.y - (obj.pathOffset ? obj.pathOffset.y : 0);
                     let transformed = fabric.util.transformPoint({x: ptX, y: ptY}, objMat);
                     stroke.push(sanitizeCoordinates(transformed.x, transformed.y, isRound, tableWidth, tableHeight));
                     
-                    prevPt = pt;
+                    processPathSegment(stroke);
                 }
-                if (stroke.length > 1) processPathSegment(stroke);
-            }
+            });
         }
         else if (obj.type === 'polygon' || obj.type === 'polyline' || obj.type === 'line') {
             let pts = [];
@@ -520,7 +529,8 @@ window.optimizeSVG = async function() {
         let edge = nodes[u].adj.find(e => ((e.u === u && e.v === v) || (e.v === u && e.u === v)) && !e.rendered);
         if(edge) edge.rendered = true;
         
-        let stepIsRed = edge ? edge.isBridge : false;
+        // Sécurité visuelle : si l'arête n'est pas trouvée (bug mathématique), on la dessine en ROUGE pour la repérer.
+        let stepIsRed = edge ? edge.isBridge : true; 
         
         if(currentPts.length === 0) {
             currentPts.push(nodes[u]);
