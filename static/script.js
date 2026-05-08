@@ -532,20 +532,39 @@ if (svgUploadInput) {
                 if(!ctm) return;
                 
                 let pts = [];
-                for(let l=0; l<=len; l+=2) {
+                let prevRawPt = null;
+                
+                // On adapte le pas pour toujours avoir un point tous les 2px sur la table finale
+                // (Cela évite l'effet "low-poly" si le SVG importé est tout petit)
+                const stepSVG = Math.max(0.1, 2.0 / scale); 
+
+                for(let l=0; l<=len; l+=stepSVG) {
                     let pt = path.getPointAtLength(l);
+                    
+                    // DÉTECTION DU SAUT (MoveTo command 'M')
+                    if (prevRawPt) {
+                        let rawDist = Math.hypot(pt.x - prevRawPt.x, pt.y - prevRawPt.y);
+                        // Si la distance parcourue est nettement supérieure au pas théorique,
+                        // c'est que le stylo s'est levé (gap invisible).
+                        if (rawDist > stepSVG * 1.5) {
+                            if (pts.length > 1) rawSvgPreview.push(pts); // On sauvegarde le bout de trait précédent
+                            pts = []; // On coupe et on initialise un nouveau trait propre
+                        }
+                    }
+                    prevRawPt = pt;
+
                     // Application de la matrice
                     let absX = pt.x * ctm.a + pt.y * ctm.c + ctm.e;
                     let absY = pt.x * ctm.b + pt.y * ctm.d + ctm.f;
+                    
                     // Mise à l'échelle table
                     let finalX = (absX * scale) + offsetX;
                     let finalY = (absY * scale) + offsetY;
                     
                     pts.push(sanitizeCoordinates(finalX, finalY, isRound, tableWidth, tableHeight));
                 }
-                rawSvgPreview.push(pts);
+                if(pts.length > 1) rawSvgPreview.push(pts); // Ajout du dernier trait
             });
-
             document.body.removeChild(container);
             renderCanvas(); // Affiche le dessin brut bleu sans optimisation
         };
