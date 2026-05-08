@@ -113,8 +113,16 @@
                         <input type="file" id="svg-upload-file" accept=".svg" style="display: none;">
                         <label for="svg-upload-file" class="upload-btn" style="border-color: #9b59b6; color: #9b59b6;">📂 Importer un SVG</label>
                         
+                        <div class="slider-group" style="background: rgba(41, 128, 185, 0.1); padding: 10px; border-radius: 6px; margin-bottom: 15px; border-left: 3px solid #2980b9;">
+                            <label for="max-jump-slider" style="color: var(--text-main); font-weight: bold;">
+                                Saut max autorisé : <span id="val-max-jump" style="color: #dfc391;">40</span> px
+                            </label>
+                            <input type="range" id="max-jump-slider" min="10" max="200" value="40" oninput="document.getElementById('val-max-jump').innerText = this.value">
+                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 5px; margin-bottom: 0;">Si le vide entre deux zones dépasse cette valeur, le calcul sera bloqué pour protéger le sable.</p>
+                        </div>
+
                         <div style="background: rgba(155, 89, 182, 0.1); border-left: 3px solid #9b59b6; padding: 10px; margin-bottom: 15px; font-size: 0.85rem; color: #e2e8f0;">
-                            Placez et dimensionnez l'image. Le bouton ci-dessous calculera le trajet optimal par l'extérieur.
+                            Le programme calculera le trajet optimal et empruntera les traits existants si possible.
                         </div>
 
                         <button class="primary-btn" id="btn-optimize-svg" onclick="optimizeSVG()" style="background-color: #9b59b6; margin-top: 5px;">⚡ CALCULER LE TRAJET</button>
@@ -169,6 +177,7 @@
                         <div id="canvas-container" style="position: relative;">
                             <canvas id="sunae-canvas"></canvas>
                             <div id="text-grid-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>
+                            <div id="sim-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>
                         </div>
                     </div>
                 </div>
@@ -177,7 +186,6 @@
         </div>
     </section>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
