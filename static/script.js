@@ -253,7 +253,7 @@ function updateTravelLines() {
     }
 }
 
-// --- IMPORTATION SVG (RÉSOLUTION ZOOM ET GAP) ---
+// --- IMPORTATION SVG (FILTRAGE INVISIBLE ET GAP) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -271,7 +271,6 @@ if (svgUploadInput) {
             const svgEl = container.querySelector('svg');
             if(!svgEl) { document.body.removeChild(container); return; }
 
-            // SOLUTION ZOOM : Forcer le ViewBox et imposer la taille de 80% de la table
             if (!svgEl.getAttribute('viewBox')) {
                 let w = parseFloat(svgEl.getAttribute('width')) || tableWidth;
                 let h = parseFloat(svgEl.getAttribute('height')) || tableHeight;
@@ -283,8 +282,19 @@ if (svgUploadInput) {
             svgEl.setAttribute('width', drawAreaW + 'px');
             svgEl.setAttribute('height', drawAreaH + 'px');
 
-            // Conversion formes de base -> path
+            // Fonction pour vérifier si un élément est invisible (ex: un cadre de fond)
+            const isElementInvisible = (el) => {
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return true;
+                if ((!el.getAttribute('stroke') || el.getAttribute('stroke') === 'none') && 
+                    (!el.getAttribute('fill') || el.getAttribute('fill') === 'none')) return true;
+                return false;
+            };
+
+            // Conversion formes de base -> path (en ignorant les objets invisibles)
             svgEl.querySelectorAll('rect, circle, ellipse, line, polygon, polyline').forEach(el => {
+                if (isElementInvisible(el)) return;
+
                 let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
                 let d = "";
                 if (el.tagName === 'rect') {
@@ -310,13 +320,14 @@ if (svgUploadInput) {
                 el.parentNode.replaceChild(p, el);
             });
 
-            // Force le navigateur à appliquer les dimensions mathématiquement
             svgEl.getBoundingClientRect();
 
             rawSvgPreview = []; svgStrokes = [];
             const screenStep = 2.0;
 
             svgEl.querySelectorAll('path').forEach(path => {
+                if (isElementInvisible(path)) return; // On ignore les chemins invisibles
+
                 const len = path.getTotalLength(); if(len <= 1) return;
                 const ctm = path.getCTM(); if(!ctm) return;
                 
@@ -327,7 +338,6 @@ if (svgUploadInput) {
                 for(let l=0; l<=len; l+=internalStep) {
                     let pt = path.getPointAtLength(l);
                     
-                    // SOLUTION GAP (Visage de Lotte) : On détecte si le stylo s'est levé (MoveTo)
                     if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 3) {
                         if (pts.length > 1) rawSvgPreview.push(pts);
                         pts = []; 
@@ -337,7 +347,6 @@ if (svgUploadInput) {
                     let tx = pt.x * ctm.a + pt.y * ctm.c + ctm.e;
                     let ty = pt.x * ctm.b + pt.y * ctm.d + ctm.f;
                     
-                    // On centre le dessin (80%) au milieu de la table
                     let finalX = tx + (tableWidth - drawAreaW) / 2;
                     let finalY = ty + (tableHeight - drawAreaH) / 2;
                     
@@ -351,7 +360,7 @@ if (svgUploadInput) {
     });
 }
 
-// --- ALGORITHME COMPLET DE ROUTAGE (Avec Pauses pour l'UI) ---
+// --- ALGORITHME COMPLET DE ROUTAGE ---
 window.optimizeSVG = async function() {
     if(rawSvgPreview.length === 0) return;
     const btn = document.getElementById('btn-optimize-svg');
@@ -367,7 +376,7 @@ window.optimizeSVG = async function() {
     }
 
     updateProgress(10, 'Extraction des Nœuds...');
-    await new Promise(r => setTimeout(r, 50)); // LAISSE L'UI RESPIRER !
+    await new Promise(r => setTimeout(r, 50)); 
 
     let nodes = []; let edges = [];
     function addNode(p) {
@@ -386,7 +395,7 @@ window.optimizeSVG = async function() {
         for(let i=1; i<pts.length; i++) { let curr = addNode(pts[i]); addEdge(prev, curr); prev = curr; }
     });
 
-    // 2. KRUSKAL (AVEC LA LIMITE DE SAUT UI)
+    // 2. KRUSKAL (CONNEXION)
     updateProgress(30, 'Calcul des ponts minimaux...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -419,7 +428,7 @@ window.optimizeSVG = async function() {
         
         bridges.forEach(b => {
             if(cF(b.c1) !== cF(b.c2)) { 
-                if (b.d > maxJump) return; // LIMITE RESPECTÉE ICI
+                if (b.d > maxJump) return;
                 cP[cF(b.c1)] = cF(b.c2); 
                 remainingComps--;
                 addEdge(b.u, b.v, true); 
@@ -432,7 +441,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 3. DIJKSTRA (Eulerize avec grosse pénalité)
+    // 3. DIJKSTRA (Eulerize avec grosse pénalité sur les sauts)
     updateProgress(50, 'Routage agressif sur traits...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -451,7 +460,7 @@ window.optimizeSVG = async function() {
             if(curr.dist > dist[u]) continue;
             for(let e of nodes[u].adj) {
                 let v = (e.u === u) ? e.v : e.u;
-                let cost = e.isBridge ? e.d * 10000 : e.d; // Pénalité des sauts !
+                let cost = e.isBridge ? e.d * 10000 : e.d; // La bille DÉTESTE les traits rouges
                 let alt = dist[u] + cost;
                 if(alt < dist[v]) { dist[v] = alt; prev[v] = u; pq.push(v, alt); }
             }
@@ -476,25 +485,31 @@ window.optimizeSVG = async function() {
         passes++;
         if (passes % 10 === 0) {
             updateProgress(50 + Math.floor((1 - (odds.length / totalOdds)) * 30), 'Routage sur les lignes...');
-            await new Promise(r => setTimeout(r, 0)); // Respiration UI
+            await new Promise(r => setTimeout(r, 0));
         }
     }
 
-    // 4. HIERHOLZER
+    // 4. HIERHOLZER (Le VRAI tri prioritaire corrigé !)
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 50));
 
-    let stack = [0]; let path = [];
-    while(stack.length > 0) {
-        let u = stack[stack.length - 1];
-        
-        // Priorité aux traits bleus originaux
-        nodes[u].adj.sort((a, b) => {
+    // On pré-trie les arrêtes de chaque nœud pour maximiser la vitesse.
+    nodes.forEach(n => {
+        n.adj.sort((a, b) => {
             let scoreA = a.isBridge ? 1 : (a.isDuplicate ? 2 : 3);
             let scoreB = b.isBridge ? 1 : (b.isDuplicate ? 2 : 3);
-            return scoreA - scoreB;
+            // On veut que le "find()" choisisse le score le plus ÉLEVÉ en premier !
+            return scoreB - scoreA; 
         });
+    });
 
+    // CORRECTION DU CRASH SILENCIEUX : On cherche un vrai point de départ !
+    let validStartIdx = nodes.findIndex(n => n.adj.length > 0);
+    if (validStartIdx === -1) { btn.disabled = false; pContainer.style.display = 'none'; return; }
+
+    let stack = [validStartIdx]; let path = [];
+    while(stack.length > 0) {
+        let u = stack[stack.length - 1];
         let e = nodes[u].adj.find(ed => !ed.used);
         if(e) { e.used = true; stack.push(e.u === u ? e.v : e.u); } else path.push(stack.pop());
     }
