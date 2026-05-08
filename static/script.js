@@ -253,7 +253,7 @@ function updateTravelLines() {
     }
 }
 
-// --- IMPORTATION SVG (FILTRAGE INVISIBLE ET GAP) ---
+// --- IMPORTATION SVG (AVEC SÉCURITÉ INVISIBLE ET DÉTECTION GAP) ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -263,7 +263,7 @@ if (svgUploadInput) {
             
             const container = document.createElement('div');
             container.style.position = 'absolute'; 
-            container.style.left = '-9999px'; // Rendu hors écran mais VISIBLE pour le moteur
+            container.style.left = '-9999px'; 
             container.style.top = '-9999px'; 
             document.body.appendChild(container); 
             container.innerHTML = f.target.result;
@@ -282,18 +282,9 @@ if (svgUploadInput) {
             svgEl.setAttribute('width', drawAreaW + 'px');
             svgEl.setAttribute('height', drawAreaH + 'px');
 
-            // Fonction corrigée : on regarde explicitement si fill/stroke valent "none"
-            const isElementInvisible = (el) => {
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.opacity === '0') return true;
-                const stroke = el.getAttribute('stroke') || style.stroke;
-                const fill = el.getAttribute('fill') || style.fill;
-                if (stroke === 'none' && fill === 'none') return true;
-                return false;
-            };
-
+            // Conversion formes de base -> path (Ignorer STRICTEMENT les cadres de fond)
             svgEl.querySelectorAll('rect, circle, ellipse, line, polygon, polyline').forEach(el => {
-                if (isElementInvisible(el)) return;
+                if (el.getAttribute('fill') === 'none' && el.getAttribute('stroke') === 'none') return;
 
                 let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
                 let d = "";
@@ -326,7 +317,7 @@ if (svgUploadInput) {
             const screenStep = 2.0;
 
             svgEl.querySelectorAll('path').forEach(path => {
-                if (isElementInvisible(path)) return; 
+                if (path.getAttribute('fill') === 'none' && path.getAttribute('stroke') === 'none') return; 
 
                 const len = path.getTotalLength(); if(len <= 1) return;
                 const ctm = path.getCTM(); if(!ctm) return;
@@ -338,8 +329,8 @@ if (svgUploadInput) {
                 for(let l=0; l<=len; l+=internalStep) {
                     let pt = path.getPointAtLength(l);
                     
-                    // Détection des levées de stylo (MoveTo) invisibles
-                    if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 2.5) {
+                    // DÉTECTION DES SAUTS : J'ai mis 1.5 pour couper les grandes lignes droites bleues !
+                    if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 1.5) {
                         if (pts.length > 1) rawSvgPreview.push(pts);
                         pts = []; 
                     }
@@ -442,7 +433,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 3. DIJKSTRA (Eulerize avec grosse pénalité sur les sauts)
+    // 3. DIJKSTRA (Eulerize)
     updateProgress(50, 'Routage agressif sur traits...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -461,7 +452,7 @@ window.optimizeSVG = async function() {
             if(curr.dist > dist[u]) continue;
             for(let e of nodes[u].adj) {
                 let v = (e.u === u) ? e.v : e.u;
-                let cost = e.isBridge ? e.d * 10000 : e.d; // La bille DÉTESTE les traits rouges
+                let cost = e.isBridge ? e.d * 10000 : e.d; 
                 let alt = dist[u] + cost;
                 if(alt < dist[v]) { dist[v] = alt; prev[v] = u; pq.push(v, alt); }
             }
@@ -478,7 +469,9 @@ window.optimizeSVG = async function() {
             while(curr !== start.id) {
                 let p = prev[curr];
                 let origEdge = nodes[curr].adj.find(e => (e.u===curr && e.v===p) || (e.v===curr && e.u===p));
-                addEdge(curr, p, origEdge ? origEdge.isBridge : false, true); 
+                // IMPORTANT : Si la bille REPASSE sur un trait bleu, le duplicata créé ici restera bleu.
+                let isNowBridge = origEdge ? origEdge.isBridge : false;
+                addEdge(curr, p, isNowBridge, true); 
                 curr = p;
             }
         }
@@ -490,7 +483,7 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 4. HIERHOLZER (Le VRAI tri prioritaire corrigé !)
+    // 4. HIERHOLZER
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 50));
 
