@@ -274,7 +274,13 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     container.style.maxWidth = tableWidth + 'px';
     container.style.height = 'auto';
     container.style.aspectRatio = round ? '1 / 1' : `${tableWidth} / ${tableHeight}`;
-    container.style.borderRadius = isRound ? '50%' : '20px';
+    
+    // Forcer l'arrondi sur TOUTES les couches visuelles
+    let radiusStyle = isRound ? '50%' : '20px';
+    container.style.borderRadius = radiusStyle;
+    canvas.style.borderRadius = radiusStyle;
+    const simOverlay = document.getElementById('sim-overlay');
+    if(simOverlay) simOverlay.style.borderRadius = radiusStyle;
 
     // Événements Souris / Tactile natifs
     canvas.onpointerdown = function(e) {
@@ -285,6 +291,37 @@ function setupWorkspace(tableName, round, w_param, h_param) {
         currentStroke = { isUserStroke: true, createdAt: Date.now(), sunaeAbsPoints: [p] };
         renderCanvas();
     };
+
+    canvas.onpointermove = function(e) {
+        if (!isDrawing) return;
+        let p = getMousePos(e);
+        if (drawMode === 'freedraw') {
+            currentStroke.sunaeAbsPoints.push(p);
+        } else {
+            if(currentStroke.sunaeAbsPoints.length === 1) currentStroke.sunaeAbsPoints.push(p);
+            else currentStroke.sunaeAbsPoints[1] = p;
+        }
+        renderCanvas();
+    };
+
+    canvas.onpointerup = function(e) {
+        if (!isDrawing) return;
+        isDrawing = false;
+        if (currentStroke.sunaeAbsPoints.length > 1) {
+            userStrokes.push(currentStroke);
+        }
+        currentStroke = null;
+        updateTravelLines();
+        renderCanvas();
+    };
+
+    document.querySelectorAll('input[name="drawMode"]').forEach(radio => {
+        radio.addEventListener('change', function() { drawMode = this.value; });
+    });
+
+    setupBackgroundControls(); setupSimulator();
+    renderCanvas();
+}
 
     canvas.onpointermove = function(e) {
         if (!isDrawing) return;
@@ -417,16 +454,61 @@ if (svgUploadInput) {
         const reader = new FileReader();
         reader.onload = function(f) {
             
-            // INJECTION DOM SECRETE
+            // INJECTION DOM HORS ÉCRAN (Avec dimensions pour forcer le calcul du navigateur)
             const container = document.createElement('div');
-            container.style.visibility = 'hidden';
             container.style.position = 'absolute';
-            container.style.width = '0px'; container.style.height = '0px';
+            container.style.left = '-9999px';
+            container.style.top = '-9999px';
+            container.style.width = '2000px'; 
+            container.style.height = '2000px';
+            container.style.visibility = 'hidden';
             document.body.appendChild(container);
             container.innerHTML = f.target.result;
 
             const svgEl = container.querySelector('svg');
             if(!svgEl) { document.body.removeChild(container); return; }
+
+            // PRÉ-PROCESSEUR : Conversion de toutes les formes basiques en <path>
+            svgEl.querySelectorAll('rect').forEach(el => {
+                let x = parseFloat(el.getAttribute('x')) || 0, y = parseFloat(el.getAttribute('y')) || 0;
+                let w = parseFloat(el.getAttribute('width')) || 0, h = parseFloat(el.getAttribute('height')) || 0;
+                let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute('d', `M ${x} ${y} L ${x+w} ${y} L ${x+w} ${y+h} L ${x} ${y+h} Z`);
+                if(el.getAttribute('transform')) p.setAttribute('transform', el.getAttribute('transform'));
+                el.parentNode.replaceChild(p, el);
+            });
+            svgEl.querySelectorAll('line').forEach(el => {
+                let x1 = parseFloat(el.getAttribute('x1')) || 0, y1 = parseFloat(el.getAttribute('y1')) || 0;
+                let x2 = parseFloat(el.getAttribute('x2')) || 0, y2 = parseFloat(el.getAttribute('y2')) || 0;
+                let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute('d', `M ${x1} ${y1} L ${x2} ${y2}`);
+                if(el.getAttribute('transform')) p.setAttribute('transform', el.getAttribute('transform'));
+                el.parentNode.replaceChild(p, el);
+            });
+            svgEl.querySelectorAll('polygon, polyline').forEach(el => {
+                let pts = (el.getAttribute('points') || "").trim().split(/[\s,]+/);
+                if(pts.length < 2) return;
+                let d = `M ${pts[0]} ${pts[1]}`;
+                for(let i=2; i<pts.length; i+=2) d += ` L ${pts[i]} ${pts[i+1]}`;
+                if(el.tagName.toLowerCase() === 'polygon') d += ' Z';
+                let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute('d', d);
+                if(el.getAttribute('transform')) p.setAttribute('transform', el.getAttribute('transform'));
+                el.parentNode.replaceChild(p, el);
+            });
+            svgEl.querySelectorAll('circle, ellipse').forEach(el => {
+                let cx = parseFloat(el.getAttribute('cx')) || 0, cy = parseFloat(el.getAttribute('cy')) || 0;
+                let rx = parseFloat(el.getAttribute('r') || el.getAttribute('rx')) || 0;
+                let ry = parseFloat(el.getAttribute('r') || el.getAttribute('ry')) || 0;
+                let d = `M ${cx-rx} ${cy} a ${rx},${ry} 0 1,0 ${rx*2},0 a ${rx},${ry} 0 1,0 -${rx*2},0`;
+                let p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute('d', d);
+                if(el.getAttribute('transform')) p.setAttribute('transform', el.getAttribute('transform'));
+                el.parentNode.replaceChild(p, el);
+            });
+
+            // Forcer le rendu du DOM pour la matrice
+            svgEl.getBoundingClientRect();
 
             // Calcul du ratio d'échelle strict
             const bbox = svgEl.getBBox();
@@ -434,8 +516,8 @@ if (svgUploadInput) {
             const svgH = svgEl.viewBox?.baseVal?.height || bbox.height || parseFloat(svgEl.getAttribute('height')) || tableHeight;
             
             const scale = Math.min(tableWidth / svgW, tableHeight / svgH) * 0.8;
-            const offsetX = (tableWidth - (svgW * scale)) / 2;
-            const offsetY = (tableHeight - (svgH * scale)) / 2;
+            const offsetX = (tableWidth - (svgW * scale)) / 2 - ((bbox.x || 0) * scale);
+            const offsetY = (tableHeight - (svgH * scale)) / 2 - ((bbox.y || 0) * scale);
 
             rawSvgPreview = [];
             svgStrokes = [];
@@ -447,8 +529,9 @@ if (svgUploadInput) {
                 if(len <= 1) return;
                 
                 const ctm = path.getCTM(); // La matrice parfaite du navigateur
-                let pts = [];
+                if(!ctm) return;
                 
+                let pts = [];
                 for(let l=0; l<=len; l+=2) {
                     let pt = path.getPointAtLength(l);
                     // Application de la matrice
