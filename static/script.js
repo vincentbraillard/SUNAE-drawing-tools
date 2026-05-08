@@ -263,8 +263,8 @@ if (svgUploadInput) {
             
             const container = document.createElement('div');
             container.style.position = 'absolute'; 
-            container.style.left = '2000px'; container.style.top = '2000px'; 
-            container.style.visibility = 'hidden';
+            container.style.left = '-9999px'; // Rendu hors écran mais VISIBLE pour le moteur
+            container.style.top = '-9999px'; 
             document.body.appendChild(container); 
             container.innerHTML = f.target.result;
             
@@ -282,16 +282,16 @@ if (svgUploadInput) {
             svgEl.setAttribute('width', drawAreaW + 'px');
             svgEl.setAttribute('height', drawAreaH + 'px');
 
-            // Fonction pour vérifier si un élément est invisible (ex: un cadre de fond)
+            // Fonction corrigée : on regarde explicitement si fill/stroke valent "none"
             const isElementInvisible = (el) => {
                 const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return true;
-                if ((!el.getAttribute('stroke') || el.getAttribute('stroke') === 'none') && 
-                    (!el.getAttribute('fill') || el.getAttribute('fill') === 'none')) return true;
+                if (style.display === 'none' || style.opacity === '0') return true;
+                const stroke = el.getAttribute('stroke') || style.stroke;
+                const fill = el.getAttribute('fill') || style.fill;
+                if (stroke === 'none' && fill === 'none') return true;
                 return false;
             };
 
-            // Conversion formes de base -> path (en ignorant les objets invisibles)
             svgEl.querySelectorAll('rect, circle, ellipse, line, polygon, polyline').forEach(el => {
                 if (isElementInvisible(el)) return;
 
@@ -326,7 +326,7 @@ if (svgUploadInput) {
             const screenStep = 2.0;
 
             svgEl.querySelectorAll('path').forEach(path => {
-                if (isElementInvisible(path)) return; // On ignore les chemins invisibles
+                if (isElementInvisible(path)) return; 
 
                 const len = path.getTotalLength(); if(len <= 1) return;
                 const ctm = path.getCTM(); if(!ctm) return;
@@ -338,7 +338,8 @@ if (svgUploadInput) {
                 for(let l=0; l<=len; l+=internalStep) {
                     let pt = path.getPointAtLength(l);
                     
-                    if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 3) {
+                    // Détection des levées de stylo (MoveTo) invisibles
+                    if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 2.5) {
                         if (pts.length > 1) rawSvgPreview.push(pts);
                         pts = []; 
                     }
@@ -493,17 +494,14 @@ window.optimizeSVG = async function() {
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 50));
 
-    // On pré-trie les arrêtes de chaque nœud pour maximiser la vitesse.
     nodes.forEach(n => {
         n.adj.sort((a, b) => {
             let scoreA = a.isBridge ? 1 : (a.isDuplicate ? 2 : 3);
             let scoreB = b.isBridge ? 1 : (b.isDuplicate ? 2 : 3);
-            // On veut que le "find()" choisisse le score le plus ÉLEVÉ en premier !
             return scoreB - scoreA; 
         });
     });
 
-    // CORRECTION DU CRASH SILENCIEUX : On cherche un vrai point de départ !
     let validStartIdx = nodes.findIndex(n => n.adj.length > 0);
     if (validStartIdx === -1) { btn.disabled = false; pContainer.style.display = 'none'; return; }
 
