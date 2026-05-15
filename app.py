@@ -122,6 +122,16 @@ def export_thr():
         # ==============================================================
         if module_name == "Texte Automatique":
             text_lines = data.get('text_lines', [])
+            dyn_cfg = data.get('dynamic_cfg')
+            
+            # Surcharge de la configuration de base si l'utilisateur a utilisé les sliders
+            if dyn_cfg:
+                cfg["w"] = dyn_cfg.get("w", cfg["w"])
+                cfg["h"] = dyn_cfg.get("h", cfg["h"])
+                cfg["spacing"] = dyn_cfg.get("spacing", cfg["spacing"])
+                cfg["rows"] = dyn_cfg.get("rows", cfg["rows"])
+                cfg["y_centers"] = dyn_cfg.get("y_centers", cfg["y_centers"])
+
             alphabet = get_custom_alphabet()
             char_width, char_height, spacing = cfg["w"], cfg["h"], cfg["spacing"]
             slot_width = char_width + spacing
@@ -218,7 +228,7 @@ def export_thr():
                     raw_points.append((cumulative_theta, math.hypot(cx, cy)))
 
         # ==============================================================
-        # DESSIN LIBRE & SVG (Le JS fait le TSP et l'envoie prêt)
+        # DESSIN LIBRE & SVG
         # ==============================================================
         elif module_name in ["Dessin Libre", "Fichier SVG"]:
             objects = data.get('drawing', {}).get('objects', [])
