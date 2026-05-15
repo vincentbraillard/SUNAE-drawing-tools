@@ -3,6 +3,7 @@ let canvas = null;
 let ctx = null;
 let currentTable = null;
 let currentModule = null;
+let dynamicCfg = null; // Stocke la configuration texte modifiée par les sliders
 let isRound = false;
 let drawMode = 'freedraw'; 
 
@@ -70,18 +71,6 @@ function getYYMMDD() {
     return String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 }
 
-function getGridText() {
-    if (!currentTable || !TABLE_CFG[currentTable]) return "";
-    const cfg = TABLE_CFG[currentTable]; let text = "";
-    for (let r = 0; r < cfg.rows.length; r++) {
-        for (let c = 0; c < cfg.rows[r]; c++) {
-            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
-            if (input && input.value && input.value.trim() !== "") text += input.value.trim();
-        }
-    }
-    return text;
-}
-
 function sanitizeCoordinates(x, y, round, w, h) {
     if (round) {
         const cx = w / 2; const cy = h / 2; const radius = (w / 2) - 2; 
@@ -115,6 +104,7 @@ function goToStep(step, moduleName = null) {
 
         if (currentModule === 'Texte Automatique') {
             document.getElementById('tools-texte').style.display = 'block';
+            resetTextSliders();
             setTimeout(buildTextGrid, 50); 
         } else if (currentModule === 'Dessin Libre') {
             document.getElementById('simulation-section').style.display = 'block';
@@ -311,8 +301,6 @@ if (svgUploadInput) {
                 el.parentNode.replaceChild(p, el);
             });
 
-            svgEl.getBoundingClientRect();
-
             rawSvgPreview = []; svgStrokes = [];
             const screenStep = 2.0;
 
@@ -329,7 +317,6 @@ if (svgUploadInput) {
                 for(let l=0; l<=len; l+=internalStep) {
                     let pt = path.getPointAtLength(l);
                     
-                    // DÉTECTION DES SAUTS : J'ai mis 1.5 pour couper les grandes lignes droites bleues !
                     if (prevRaw && Math.hypot(pt.x - prevRaw.x, pt.y - prevRaw.y) > internalStep * 1.5) {
                         if (pts.length > 1) rawSvgPreview.push(pts);
                         pts = []; 
@@ -469,7 +456,6 @@ window.optimizeSVG = async function() {
             while(curr !== start.id) {
                 let p = prev[curr];
                 let origEdge = nodes[curr].adj.find(e => (e.u===curr && e.v===p) || (e.v===curr && e.u===p));
-                // IMPORTANT : Si la bille REPASSE sur un trait bleu, le duplicata créé ici restera bleu.
                 let isNowBridge = origEdge ? origEdge.isBridge : false;
                 addEdge(curr, p, isNowBridge, true); 
                 curr = p;
@@ -530,42 +516,6 @@ window.resetCanvas = () => { userStrokes = []; travelLines = []; svgStrokes = []
 window.undoStroke = () => { userStrokes.pop(); updateTravelLines(); renderCanvas(); };
 window.resetSVG = () => { rawSvgPreview = []; svgStrokes = []; renderCanvas(); };
 
-// --- TEXTE AUTOMATIQUE (Grille) ---
-function buildTextGrid() {
-    const grid = document.getElementById('text-grid-container');
-    const cfg = TABLE_CFG[currentTable];
-    if (!cfg) return;
-
-    const center_px = tableWidth / 2.0; const center_py = tableHeight / 2.0;
-    let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
-    const scale_px = (tableWidth / 2.0) / xmax;
-
-    for (let r = 0; r < cfg.rows.length; r++) {
-        let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
-        for (let c = 0; c < cfg.rows[r]; c++) {
-            let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
-            let py = center_py - cfg.y_centers[r] * scale_px;
-            let input = document.createElement('input');
-            input.type = 'text'; input.maxLength = 1; input.className = 'sunae-letter-box';
-            input.dataset.row = r; input.dataset.col = c;
-            input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
-            input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
-
-            input.addEventListener('keyup', function(e) {
-                let currentText = getGridText();
-                document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
-                if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-                this.value = this.value.toUpperCase();
-                if (this.value.length === 1) {
-                    let next = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c+1}"]`) || document.querySelector(`.sunae-letter-box[data-row="${r+1}"][data-col="0"]`);
-                    if (next) next.focus();
-                }
-            });
-            grid.appendChild(input);
-        }
-    }
-}
-
 function setupBackgroundControls() {
     document.getElementById('bg-upload').onchange = (e) => {
         let r = new FileReader(); r.onload = (f) => { bgImageObj = new Image(); bgImageObj.onload = renderCanvas; bgImageObj.src = f.target.result; };
@@ -583,6 +533,139 @@ function setupBackgroundControls() {
 
 function setupSimulator() { document.getElementById('bille-slider').oninput = function() { simProgress = parseInt(this.value); renderCanvas(); }; }
 
+
+// --- GESTION DYNAMIQUE DU TEXTE ---
+
+window.resetTextGrid = function() {
+    document.querySelectorAll('.sunae-letter-box').forEach(inp => inp.value = '');
+    document.getElementById('export-filename').placeholder = "Texte_Sunae";
+};
+
+window.resetTextSliders = function() {
+    if (!currentTable || !TABLE_CFG[currentTable]) return;
+    let base = TABLE_CFG[currentTable];
+    
+    document.getElementById('slider-text-size').value = 100;
+    document.getElementById('slider-text-count').value = 100;
+    document.getElementById('slider-text-spacing').value = 100;
+    
+    let linesSlider = document.getElementById('slider-text-lines');
+    linesSlider.max = base.rows.length;
+    linesSlider.value = base.rows.length;
+    
+    updateTextTools(false);
+};
+
+window.updateTextTools = function(rebuild = true) {
+    if (!currentTable || !TABLE_CFG[currentTable]) return;
+    let base = TABLE_CFG[currentTable];
+    
+    let sizeVal = parseInt(document.getElementById('slider-text-size').value);
+    let countVal = parseInt(document.getElementById('slider-text-count').value);
+    let spacingVal = parseInt(document.getElementById('slider-text-spacing').value);
+    let linesVal = parseInt(document.getElementById('slider-text-lines').value);
+    
+    document.getElementById('val-text-size').innerText = sizeVal;
+    document.getElementById('val-text-count').innerText = countVal;
+    document.getElementById('val-text-spacing').innerText = spacingVal;
+    document.getElementById('val-text-lines').innerText = linesVal;
+    
+    dynamicCfg = JSON.parse(JSON.stringify(base));
+    dynamicCfg.w = base.w * (sizeVal / 100);
+    dynamicCfg.h = base.h * (sizeVal / 100);
+    
+    let baseSpc = base.spacing === 0 ? 0.02 : base.spacing;
+    dynamicCfg.spacing = baseSpc * (spacingVal / 100);
+    if (base.spacing === 0 && spacingVal <= 100) dynamicCfg.spacing = 0;
+    
+    let max_y = Math.max(...base.y_centers);
+    let min_y = Math.min(...base.y_centers);
+    let dynRows = [];
+    let dynY = [];
+
+    if (linesVal === 1) {
+        dynY.push((max_y + min_y) / 2);
+        let midIdx = Math.floor(base.rows.length / 2);
+        dynRows.push(Math.max(1, Math.round(base.rows[midIdx] * (countVal/100))));
+    } else {
+        for (let i = 0; i < linesVal; i++) {
+            let t = i / (linesVal - 1);
+            dynY.push(max_y - t * (max_y - min_y));
+            let baseIdx = Math.round(t * (base.rows.length - 1));
+            dynRows.push(Math.max(1, Math.round(base.rows[baseIdx] * (countVal/100))));
+        }
+    }
+    dynamicCfg.y_centers = dynY;
+    dynamicCfg.rows = dynRows;
+    
+    if (rebuild) buildTextGrid();
+};
+
+function getGridText() {
+    const cfg = dynamicCfg || TABLE_CFG[currentTable];
+    if (!currentTable || !cfg) return "";
+    let text = "";
+    for (let r = 0; r < cfg.rows.length; r++) {
+        for (let c = 0; c < cfg.rows[r]; c++) {
+            let input = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c}"]`);
+            if (input && input.value && input.value.trim() !== "") text += input.value.trim();
+        }
+    }
+    return text;
+}
+
+function buildTextGrid() {
+    const grid = document.getElementById('text-grid-container');
+    
+    // Sauvegarde du texte existant
+    let oldText = "";
+    document.querySelectorAll('.sunae-letter-box').forEach(inp => {
+        if(inp.value.trim() !== "") oldText += inp.value.trim();
+    });
+    grid.innerHTML = ''; // Nettoyage
+    
+    const cfg = dynamicCfg || TABLE_CFG[currentTable];
+    if (!cfg) return;
+
+    const center_px = tableWidth / 2.0; const center_py = tableHeight / 2.0;
+    let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
+    const scale_px = (tableWidth / 2.0) / xmax;
+
+    let charIndex = 0;
+
+    for (let r = 0; r < cfg.rows.length; r++) {
+        let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
+        for (let c = 0; c < cfg.rows[r]; c++) {
+            let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
+            let py = center_py - cfg.y_centers[r] * scale_px;
+            
+            let input = document.createElement('input');
+            input.type = 'text'; input.maxLength = 1; input.className = 'sunae-letter-box';
+            input.dataset.row = r; input.dataset.col = c;
+            input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
+            input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
+
+            // Réinjection du texte tapé précédemment
+            if (charIndex < oldText.length) {
+                input.value = oldText[charIndex];
+                charIndex++;
+            }
+
+            input.addEventListener('keyup', function(e) {
+                let currentText = getGridText();
+                document.getElementById('export-filename').placeholder = currentText ? currentText : "Texte_Sunae";
+                if (['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+                this.value = this.value.toUpperCase();
+                if (this.value.length === 1) {
+                    let next = document.querySelector(`.sunae-letter-box[data-row="${r}"][data-col="${c+1}"]`) || document.querySelector(`.sunae-letter-box[data-row="${r+1}"][data-col="0"]`);
+                    if (next) next.focus();
+                }
+            });
+            grid.appendChild(input);
+        }
+    }
+}
+
 window.exportTHR = function() {
     let customName = document.getElementById('export-filename').value.trim();
     let finalFileName = customName !== "" ? customName : (currentModule === 'Texte Automatique' ? (getGridText() || "Texte_Sunae") : getYYMMDD() + (currentModule === 'Fichier SVG' ? "_ConvertionSVG" : "_Freedrawing"));
@@ -590,7 +673,8 @@ window.exportTHR = function() {
     let exportData = { table: currentTable, module: currentModule, canvasWidth: tableWidth, canvasHeight: tableHeight };
 
     if (currentModule === 'Texte Automatique') {
-        const cfg = TABLE_CFG[currentTable]; let text_lines = [];
+        const cfg = dynamicCfg || TABLE_CFG[currentTable]; 
+        let text_lines = [];
         for (let r = 0; r < cfg.rows.length; r++) {
             let rowText = "";
             for (let c = 0; c < cfg.rows[r]; c++) {
@@ -600,6 +684,7 @@ window.exportTHR = function() {
             text_lines.push(rowText);
         }
         exportData.text_lines = text_lines;
+        exportData.dynamic_cfg = cfg; // Envoi de la config customisée au serveur
     } else {
         exportData.drawing = { objects: (currentModule === 'Fichier SVG' ? svgStrokes : [...travelLines, ...userStrokes]) };
     }
