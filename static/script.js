@@ -102,8 +102,18 @@ function goToStep(step, moduleName = null) {
         const sections = ['simulation-section', 'background-section', 'tools-dessin', 'tools-texte', 'tools-svg'];
         sections.forEach(s => { const el = document.getElementById(s); if(el) el.style.display = 'none'; });
 
+        // CORRECTIF DU BOUCLIER TRANSPARENT : on cache la grille et on la vide
+        const textGrid = document.getElementById('text-grid-container');
+        if (textGrid) {
+            textGrid.style.display = 'none';
+            if (moduleName !== 'Texte Automatique') {
+                textGrid.innerHTML = ''; // Détruit les boites de texte qui pourraient bloquer
+            }
+        }
+
         if (currentModule === 'Texte Automatique') {
             document.getElementById('tools-texte').style.display = 'block';
+            if (textGrid) textGrid.style.display = 'block'; // On ne réaffiche la grille qu'ici
             resetTextSliders();
             setTimeout(buildTextGrid, 50); 
         } else if (currentModule === 'Dessin Libre') {
@@ -137,6 +147,7 @@ function setupWorkspace(tableName, round, w_param, h_param) {
     container.style.aspectRatio = round ? '1 / 1' : `${tableWidth} / ${tableHeight}`;
 
     canvas.onpointerdown = (e) => {
+        e.preventDefault(); 
         if (currentModule !== 'Dessin Libre' || simProgress < 100) return;
         isDrawing = true; canvas.setPointerCapture(e.pointerId);
         let p = getMousePos(e);
@@ -243,7 +254,7 @@ function updateTravelLines() {
     }
 }
 
-// --- IMPORTATION SVG (AVEC SÉCURITÉ INVISIBLE ET DÉTECTION GAP) ---
+// --- IMPORTATION SVG ---
 const svgUploadInput = document.getElementById('svg-upload-file');
 if (svgUploadInput) {
     svgUploadInput.addEventListener('change', function(e) {
@@ -272,7 +283,6 @@ if (svgUploadInput) {
             svgEl.setAttribute('width', drawAreaW + 'px');
             svgEl.setAttribute('height', drawAreaH + 'px');
 
-            // Conversion formes de base -> path (Ignorer STRICTEMENT les cadres de fond)
             svgEl.querySelectorAll('rect, circle, ellipse, line, polygon, polyline').forEach(el => {
                 if (el.getAttribute('fill') === 'none' && el.getAttribute('stroke') === 'none') return;
 
@@ -374,7 +384,6 @@ window.optimizeSVG = async function() {
         for(let i=1; i<pts.length; i++) { let curr = addNode(pts[i]); addEdge(prev, curr); prev = curr; }
     });
 
-    // 2. KRUSKAL (CONNEXION)
     updateProgress(30, 'Calcul des ponts minimaux...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -420,7 +429,6 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 3. DIJKSTRA (Eulerize)
     updateProgress(50, 'Routage agressif sur traits...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -469,7 +477,6 @@ window.optimizeSVG = async function() {
         }
     }
 
-    // 4. HIERHOLZER
     updateProgress(85, 'Génération du chemin continu...');
     await new Promise(r => setTimeout(r, 50));
 
@@ -565,7 +572,7 @@ window.updateTextTools = function(rebuild = true) {
     let spacingVal = parseInt(document.getElementById('slider-text-spacing').value);
     let linesVal = parseInt(document.getElementById('slider-text-lines').value);
     
-    // 1. POSITIONNEMENT EN Y DES LIGNES
+    // 1. Positionnement vertical des lignes
     let max_y = Math.max(...base.y_centers);
     let min_y = Math.min(...base.y_centers);
     let dynY = [];
@@ -579,19 +586,18 @@ window.updateTextTools = function(rebuild = true) {
         }
     }
     
-    // 2. CONTRAINTE VERTICALE (Éviter la superposition)
+    // 2. Contrainte verticale
     let max_h_allowed = Infinity;
     if (linesVal > 1) {
         let gap = (max_y - min_y) / (linesVal - 1);
-        max_h_allowed = gap * 0.90; // La hauteur max = 90% de l'écart (10% d'espace libre min)
+        max_h_allowed = gap * 0.90; 
     } else {
-        max_h_allowed = 1.5; // Si 1 seule ligne, presque pas de limite
+        max_h_allowed = 1.5; 
     }
     
     let target_h = base.h * (sizeVal / 100);
     let target_w = base.w * (sizeVal / 100);
     
-    // Brider la hauteur réelle et appliquer le ratio pour la largeur
     let actual_h = Math.min(target_h, max_h_allowed);
     let actual_w = target_w * (actual_h / target_h); 
     
@@ -604,7 +610,7 @@ window.updateTextTools = function(rebuild = true) {
     dynamicCfg.spacing = baseSpc * (spacingVal / 100);
     if (base.spacing === 0 && spacingVal <= 100) dynamicCfg.spacing = 0;
     
-    // 3. CONTRAINTE HORIZONTALE (Garantir des lettres entières dans le cadre)
+    // 3. Contrainte horizontale
     let dynRows = [];
     let xmax_global = base.round ? 1.0 : base.aspect * (1.0 / Math.sqrt(base.aspect * base.aspect + 1));
     
@@ -612,24 +618,20 @@ window.updateTextTools = function(rebuild = true) {
         let y = dynY[i];
         let available_width = 0;
         
-        // Calcul de la largeur max en X selon la position en Y
         if (base.round) {
-            let r_safe = 0.95; // Marge de 5% pour ne pas écraser la bordure
+            let r_safe = 0.95; 
             if (Math.abs(y) < r_safe) {
-                available_width = 2 * Math.sqrt(r_safe*r_safe - y*y); // Formule de la corde
+                available_width = 2 * Math.sqrt(r_safe*r_safe - y*y); 
             }
         } else {
             available_width = 2 * xmax_global * 0.95; 
         }
         
-        // Trouver le nombre max de lettres qui rentrent : W = n*w + (n-1)*space <= WidthMax
         let max_fit = Math.floor((available_width + dynamicCfg.spacing) / (dynamicCfg.w + dynamicCfg.spacing));
         
-        // Identifier le nombre souhaité par le slider
         let baseIdx = linesVal === 1 ? Math.floor(base.rows.length / 2) : Math.round((i / (linesVal - 1)) * (base.rows.length - 1));
         let target_count = Math.max(1, Math.round(base.rows[baseIdx] * (countVal / 100)));
         
-        // La ligne prendra le nombre voulu, bridé par ce qui rentre physiquement
         let actual_count = Math.min(target_count, Math.max(0, max_fit));
         dynRows.push(actual_count);
     }
@@ -659,7 +661,6 @@ function getGridText() {
 function buildTextGrid() {
     const grid = document.getElementById('text-grid-container');
     
-    // Sauvegarde du texte existant
     let oldText = "";
     document.querySelectorAll('.sunae-letter-box').forEach(inp => {
         if(inp.value.trim() !== "") oldText += inp.value.trim();
@@ -677,7 +678,7 @@ function buildTextGrid() {
     let charIndex = 0;
 
     for (let r = 0; r < cfg.rows.length; r++) {
-        if (cfg.rows[r] <= 0) continue; // Sécurité si 0 lettre ne rentre
+        if (cfg.rows[r] <= 0) continue; 
 
         let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
         
@@ -691,7 +692,6 @@ function buildTextGrid() {
             input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
             input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
 
-            // Réinjection du texte
             if (charIndex < oldText.length) {
                 input.value = oldText[charIndex];
                 charIndex++;
@@ -730,11 +730,36 @@ window.exportTHR = function() {
             text_lines.push(rowText);
         }
         exportData.text_lines = text_lines;
-        exportData.dynamic_cfg = cfg; // Envoi de la config customisée au serveur
+        exportData.dynamic_cfg = cfg; 
     } else {
         exportData.drawing = { objects: (currentModule === 'Fichier SVG' ? svgStrokes : [...travelLines, ...userStrokes]) };
     }
 
+    // --- CORRECTIF SAFARI BLOB EXPORT ---
     fetch('/export-thr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(exportData) })
-    .then(r => r.blob()).then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${finalFileName.replace(/\s+/g, '_')}.thr`; document.body.appendChild(a); a.click(); });
+    .then(r => {
+        if (!r.ok) throw new Error("Erreur de génération du fichier");
+        return r.blob();
+    })
+    .then(blob => { 
+        const fileBlob = new Blob([blob], { type: 'text/plain;charset=utf-8' });
+        const url = window.URL.createObjectURL(fileBlob);
+        
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url; 
+        a.download = `${finalFileName.replace(/\s+/g, '_')}.thr`; 
+        
+        document.body.appendChild(a); 
+        a.click(); 
+        
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 200);
+    })
+    .catch(err => {
+        console.error("Erreur lors de l'export :", err);
+        alert("Une erreur est survenue lors de la création de votre fichier. Veuillez réessayer.");
+    });
 };
