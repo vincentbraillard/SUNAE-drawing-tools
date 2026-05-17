@@ -105,3 +105,11 @@ button:hover { background-color: var(--accent-gold); color: var(--bg-card); }
         order: 1; overflow-x: auto; justify-content: flex-start; padding-bottom: 15px;
     }
 }
+
+/* CORRECTIF SAFARI : Empêche le défilement de la page quand on dessine */
+#sunae-canvas {
+    touch-action: none; 
+    -webkit-user-select: none; 
+    user-select: none;
+    outline: none;
+}
