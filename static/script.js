@@ -565,38 +565,80 @@ window.updateTextTools = function(rebuild = true) {
     let spacingVal = parseInt(document.getElementById('slider-text-spacing').value);
     let linesVal = parseInt(document.getElementById('slider-text-lines').value);
     
-    document.getElementById('val-text-size').innerText = sizeVal;
-    document.getElementById('val-text-count').innerText = countVal;
-    document.getElementById('val-text-spacing').innerText = spacingVal;
-    document.getElementById('val-text-lines').innerText = linesVal;
+    // 1. POSITIONNEMENT EN Y DES LIGNES
+    let max_y = Math.max(...base.y_centers);
+    let min_y = Math.min(...base.y_centers);
+    let dynY = [];
+    
+    if (linesVal === 1) {
+        dynY.push((max_y + min_y) / 2);
+    } else {
+        for (let i = 0; i < linesVal; i++) {
+            let t = i / (linesVal - 1);
+            dynY.push(max_y - t * (max_y - min_y));
+        }
+    }
+    
+    // 2. CONTRAINTE VERTICALE (Éviter la superposition)
+    let max_h_allowed = Infinity;
+    if (linesVal > 1) {
+        let gap = (max_y - min_y) / (linesVal - 1);
+        max_h_allowed = gap * 0.90; // La hauteur max = 90% de l'écart (10% d'espace libre min)
+    } else {
+        max_h_allowed = 1.5; // Si 1 seule ligne, presque pas de limite
+    }
+    
+    let target_h = base.h * (sizeVal / 100);
+    let target_w = base.w * (sizeVal / 100);
+    
+    // Brider la hauteur réelle et appliquer le ratio pour la largeur
+    let actual_h = Math.min(target_h, max_h_allowed);
+    let actual_w = target_w * (actual_h / target_h); 
     
     dynamicCfg = JSON.parse(JSON.stringify(base));
-    dynamicCfg.w = base.w * (sizeVal / 100);
-    dynamicCfg.h = base.h * (sizeVal / 100);
+    dynamicCfg.w = actual_w;
+    dynamicCfg.h = actual_h;
+    dynamicCfg.y_centers = dynY;
     
     let baseSpc = base.spacing === 0 ? 0.02 : base.spacing;
     dynamicCfg.spacing = baseSpc * (spacingVal / 100);
     if (base.spacing === 0 && spacingVal <= 100) dynamicCfg.spacing = 0;
     
-    let max_y = Math.max(...base.y_centers);
-    let min_y = Math.min(...base.y_centers);
+    // 3. CONTRAINTE HORIZONTALE (Garantir des lettres entières dans le cadre)
     let dynRows = [];
-    let dynY = [];
-
-    if (linesVal === 1) {
-        dynY.push((max_y + min_y) / 2);
-        let midIdx = Math.floor(base.rows.length / 2);
-        dynRows.push(Math.max(1, Math.round(base.rows[midIdx] * (countVal/100))));
-    } else {
-        for (let i = 0; i < linesVal; i++) {
-            let t = i / (linesVal - 1);
-            dynY.push(max_y - t * (max_y - min_y));
-            let baseIdx = Math.round(t * (base.rows.length - 1));
-            dynRows.push(Math.max(1, Math.round(base.rows[baseIdx] * (countVal/100))));
+    let xmax_global = base.round ? 1.0 : base.aspect * (1.0 / Math.sqrt(base.aspect * base.aspect + 1));
+    
+    for (let i = 0; i < linesVal; i++) {
+        let y = dynY[i];
+        let available_width = 0;
+        
+        // Calcul de la largeur max en X selon la position en Y
+        if (base.round) {
+            let r_safe = 0.95; // Marge de 5% pour ne pas écraser la bordure
+            if (Math.abs(y) < r_safe) {
+                available_width = 2 * Math.sqrt(r_safe*r_safe - y*y); // Formule de la corde
+            }
+        } else {
+            available_width = 2 * xmax_global * 0.95; 
         }
+        
+        // Trouver le nombre max de lettres qui rentrent : W = n*w + (n-1)*space <= WidthMax
+        let max_fit = Math.floor((available_width + dynamicCfg.spacing) / (dynamicCfg.w + dynamicCfg.spacing));
+        
+        // Identifier le nombre souhaité par le slider
+        let baseIdx = linesVal === 1 ? Math.floor(base.rows.length / 2) : Math.round((i / (linesVal - 1)) * (base.rows.length - 1));
+        let target_count = Math.max(1, Math.round(base.rows[baseIdx] * (countVal / 100)));
+        
+        // La ligne prendra le nombre voulu, bridé par ce qui rentre physiquement
+        let actual_count = Math.min(target_count, Math.max(0, max_fit));
+        dynRows.push(actual_count);
     }
-    dynamicCfg.y_centers = dynY;
     dynamicCfg.rows = dynRows;
+    
+    document.getElementById('val-text-size').innerText = sizeVal;
+    document.getElementById('val-text-count').innerText = countVal;
+    document.getElementById('val-text-spacing').innerText = spacingVal;
+    document.getElementById('val-text-lines').innerText = linesVal;
     
     if (rebuild) buildTextGrid();
 };
@@ -622,19 +664,23 @@ function buildTextGrid() {
     document.querySelectorAll('.sunae-letter-box').forEach(inp => {
         if(inp.value.trim() !== "") oldText += inp.value.trim();
     });
-    grid.innerHTML = ''; // Nettoyage
+    grid.innerHTML = ''; 
     
     const cfg = dynamicCfg || TABLE_CFG[currentTable];
     if (!cfg) return;
 
-    const center_px = tableWidth / 2.0; const center_py = tableHeight / 2.0;
+    const center_px = tableWidth / 2.0; 
+    const center_py = tableHeight / 2.0;
     let xmax = cfg.round ? 1.0 : cfg.aspect * (1.0 / Math.sqrt(cfg.aspect * cfg.aspect + 1));
     const scale_px = (tableWidth / 2.0) / xmax;
 
     let charIndex = 0;
 
     for (let r = 0; r < cfg.rows.length; r++) {
+        if (cfg.rows[r] <= 0) continue; // Sécurité si 0 lettre ne rentre
+
         let start_x = -((cfg.rows[r] * (cfg.w + cfg.spacing)) - cfg.spacing) / 2.0;
+        
         for (let c = 0; c < cfg.rows[r]; c++) {
             let px = center_px + (start_x + (c * (cfg.w + cfg.spacing)) + (cfg.w / 2.0)) * scale_px;
             let py = center_py - cfg.y_centers[r] * scale_px;
@@ -645,7 +691,7 @@ function buildTextGrid() {
             input.style.width = (cfg.w * scale_px) + 'px'; input.style.height = (cfg.h * scale_px) + 'px';
             input.style.left = (px - (cfg.w * scale_px) / 2) + 'px'; input.style.top = (py - (cfg.h * scale_px) / 2) + 'px';
 
-            // Réinjection du texte tapé précédemment
+            // Réinjection du texte
             if (charIndex < oldText.length) {
                 input.value = oldText[charIndex];
                 charIndex++;
